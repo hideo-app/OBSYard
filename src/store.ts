@@ -1,4 +1,5 @@
 import { reactive, computed, ref } from "vue";
+import { t } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
@@ -19,7 +20,7 @@ export const state = reactive<AppState>({
   tally: {},
   lowerThirds: {},
   titles: {},
-  settings: { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, platform: "streamyard", emptyBg: "transparent", priority: [], lowerThirds: "off", thumbFps: 0.5 },
+  settings: { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, autoAddAudio: false, platform: "streamyard", emptyBg: "transparent", priority: [], lowerThirds: "off", thumbFps: 0.5 },
   groups: [],
   obs: { url: "ws://127.0.0.1:4455", password: "", drive: false },
   fullRes: { on: false, status: "off", layout: "OBSYard" },
@@ -157,15 +158,15 @@ export const assign = async (slot: number | string, a: SlotAssign) => {
   if (a.video && g && !state.slots[String(n)]?.video) {
     const others = alsoOn(a.video, n);
     if (others.length) {
-      const who = trackById(a.video)?.label || "Questa sorgente";
+      const who = trackById(a.video)?.label || t("ch.thisSource");
       const where = others.map((o) => outputName(o)).join(", ");
       const pick = await askChoice(
-        `${who} è già su ${where}`,
-        `${outputName(n)} è un'uscita libera di ${g.name}.`,
+        t("ch.alreadyOn", { w: who, o: where }),
+        t("ch.freeOutput", { o: outputName(n), g: g.name }),
         [
-          { value: "dup", label: `Duplica su ${outputName(n)}`, hint: `Resta anche su ${where}: la stessa persona su due uscite`, primary: true },
-          { value: "move", label: `Sposta su ${outputName(n)}`, hint: `Come sempre nei gruppi: cambia posto nel gruppo` },
-          { value: "cancel", label: "Annulla" },
+          { value: "dup", label: t("ch.dup", { o: outputName(n) }), hint: t("ch.dupHint", { w: where }), primary: true },
+          { value: "move", label: t("ch.move", { o: outputName(n) }), hint: t("ch.moveHint") },
+          { value: "cancel", label: t("ch.cancel") },
         ],
       );
       if (pick === "dup") return void (await invoke("assign", { slot: n, assign: a, dup: true }));
@@ -178,14 +179,14 @@ export const assign = async (slot: number | string, a: SlotAssign) => {
   });
   if (!r?.ask) return;
   const { group, name, chosen, landed } = r.ask;
-  const who = name || "questa sorgente";
+  const who = name || t("ch.thisSource").toLowerCase();
   const pick = await askChoice(
-    `${outputName(chosen)} è oltre le persone in ${group}`,
-    `Il gruppo riempie le uscite in ordine, quindi ${who} andrebbe su ${outputName(landed)}.`,
+    t("ch.beyond", { o: outputName(chosen), g: group }),
+    t("ch.beyondText", { w: who, l: outputName(landed) }),
     [
-      { value: "fill", label: `Riempi fino a ${outputName(chosen)}`, hint: `Prova: ${who} su ${outputName(chosen)} e sulle uscite libere prima. Utile per provare da solo le scene con più persone`, primary: true },
-      { value: "keep", label: `Va su ${outputName(landed)}` },
-      { value: "cancel", label: "Annulla" },
+      { value: "fill", label: t("ch.fill", { o: outputName(chosen) }), hint: t("ch.fillHint", { w: who, o: outputName(chosen) }), primary: true },
+      { value: "keep", label: t("ch.keep", { l: outputName(landed) }) },
+      { value: "cancel", label: t("ch.cancel") },
     ],
   );
   if (pick === "fill") await invoke("assign", { slot: n, assign: a, fill: true });

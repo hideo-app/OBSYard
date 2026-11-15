@@ -127,6 +127,22 @@ extern "C" {
     fn obs_source_showing(source: Ptr) -> bool;
     fn video_format_get_parameters_for_format(cs: i32, range: i32, format: i32, matrix: *mut f32, min: *mut f32, max: *mut f32) -> bool;
     fn os_gettime_ns() -> u64;
+    fn obs_get_locale() -> *const c_char;
+}
+
+// ------------------------------------------------------------------ language
+
+/// OBS's language is Italian (it-IT…): the properties in Italian, otherwise in English
+fn italian() -> bool {
+    unsafe {
+        let l = obs_get_locale();
+        !l.is_null() && CStr::from_ptr(l).to_bytes().starts_with(b"it")
+    }
+}
+
+/// the text for OBS's language
+fn tr(it: &'static CStr, en: &'static CStr) -> *const c_char {
+    if italian() { it.as_ptr() } else { en.as_ptr() }
 }
 
 // ------------------------------------------------------------------ module
@@ -370,34 +386,37 @@ unsafe extern "C" fn frames_destroy(data: Ptr) {
 
 unsafe extern "C" fn get_properties(_: Ptr) -> Ptr {
     let props = obs_properties_create();
-    let list = obs_properties_add_list(props, c"output".as_ptr(), c"Uscita OBSYard".as_ptr(), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    let list = obs_properties_add_list(props, c"output".as_ptr(), tr(c"Uscita OBSYard", c"OBSYard output"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     let outputs = shared::outputs();
     if outputs.is_empty() {
-        obs_property_list_add_string(list, c"\xe2\x80\x94 OBSYard non \xc3\xa8 aperto \xe2\x80\x94".as_ptr(), c"".as_ptr());
+        obs_property_list_add_string(list, tr(c"\xe2\x80\x94 OBSYard non \xc3\xa8 aperto \xe2\x80\x94", c"\xe2\x80\x94 OBSYard is not running \xe2\x80\x94"), c"".as_ptr());
     }
     for (id, name) in outputs {
         let (n, i) = (CString::new(name).unwrap_or_default(), CString::new(id.to_string()).unwrap_or_default());
         obs_property_list_add_string(list, n.as_ptr(), i.as_ptr());
     }
-    let res = obs_properties_add_list(props, c"resolution".as_ptr(), c"Risoluzione".as_ptr(), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    let res = obs_properties_add_list(props, c"resolution".as_ptr(), tr(c"Risoluzione", c"Resolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     for (label, value) in [
-        (c"1920\xc3\x971080", c"1920x1080"),
-        (c"1280\xc3\x97720", c"1280x720"),
-        (c"2560\xc3\x971440", c"2560x1440"),
-        (c"3840\xc3\x972160", c"3840x2160"),
-        (c"1080\xc3\x971920 (verticale)", c"1080x1920"),
-        (c"Come la sorgente (cambia con chi entra)", c"source"),
+        (c"1920\xc3\x971080".as_ptr(), c"1920x1080"),
+        (c"1280\xc3\x97720".as_ptr(), c"1280x720"),
+        (c"2560\xc3\x971440".as_ptr(), c"2560x1440"),
+        (c"3840\xc3\x972160".as_ptr(), c"3840x2160"),
+        (tr(c"1080\xc3\x971920 (verticale)", c"1080\xc3\x971920 (vertical)"), c"1080x1920"),
+        (tr(c"Come la sorgente (cambia con chi entra)", c"As the source (changes with whoever is on)"), c"source"),
     ] {
-        obs_property_list_add_string(res, label.as_ptr(), value.as_ptr());
+        obs_property_list_add_string(res, label, value.as_ptr());
     }
-    let fit = obs_properties_add_list(props, c"fit".as_ptr(), c"Adattamento".as_ptr(), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-    obs_property_list_add_string(fit, c"Dentro il riquadro (bande trasparenti)".as_ptr(), c"contain".as_ptr());
-    obs_property_list_add_string(fit, c"Stira a tutto il riquadro".as_ptr(), c"stretch".as_ptr());
-    obs_properties_add_bool(props, c"audio".as_ptr(), c"Ricevi l'audio dell'uscita".as_ptr());
+    let fit = obs_properties_add_list(props, c"fit".as_ptr(), tr(c"Adattamento", c"Fit"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(fit, tr(c"Dentro il riquadro (bande trasparenti)", c"Inside the frame (transparent bands)"), c"contain".as_ptr());
+    obs_property_list_add_string(fit, tr(c"Stira a tutto il riquadro", c"Stretch to the whole frame"), c"stretch".as_ptr());
+    obs_properties_add_bool(props, c"audio".as_ptr(), tr(c"Ricevi l'audio dell'uscita", c"Receive the output's audio"));
     obs_properties_add_text(
         props,
         c"info".as_ptr(),
-        c"L'immagine arriva come OBSYard la decodifica, senza ricodifica. Audio incluso: nelle Propriet\xc3\xa0 audio avanzate di OBS si regola come le altre sorgenti.".as_ptr(),
+        tr(
+            c"L'immagine arriva come OBSYard la decodifica, senza ricodifica. Audio incluso: nelle Propriet\xc3\xa0 audio avanzate di OBS si regola come le altre sorgenti.",
+            c"The picture arrives as OBSYard decodes it, with no re-encoding. Audio included: adjust it in OBS's Advanced Audio Properties like any other source.",
+        ),
         OBS_TEXT_INFO,
     );
     props

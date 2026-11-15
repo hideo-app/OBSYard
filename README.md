@@ -156,6 +156,10 @@ For testing and development use `OBSYARD_CONFIG_DIR=<folder>`: the configuration
 
 In the studio, `localStorage.obsyardTap = "1"` records StreamYard's WebSocket messages and HTTP requests in `window.__obsyardTap`, useful if StreamYard changes protocol.
 
+## Language
+
+The control room is in Italian or English and follows the system language. To choose it by hand, open the control room with `?lang=en` (or `?lang=it`) in the address; the choice is remembered on that PC. The plugin's OBSYard source follows OBS's language. Error messages coming from the engine (e.g. when saving groups) stay in Italian.
+
 ## Output groups
 
 On first start OBSYard creates four outputs and a group, *Gruppo 1*, holding all of them. It can be edited or deleted like the others.
@@ -194,8 +198,10 @@ It works like guestroom's "test fill", to try on your own scenes meant for sever
 
 They are set in the control room's **Participants** section and apply to the whole app.
 
+- **Audio-only people**: whoever is on air with no video (camera off, voice only) shows up among the sources as **Audio only**, with their name. They are sent to an output like the others: the output has no picture but carries their voice, in groups too. If they turn the camera on, the camera takes their place in the group (same name).
 - **Add automatically to the first group**: whoever goes on air (guests and your camera, not shared screens) and is in no group joins the **first group**, the one highest in the outputs, in order of arrival.
   - It fills the outputs in sequence, and whoever goes past the last one ends up *on standby*. The group shows the **auto** badge.
+  - **Include people with audio only**: the second box lets people with no video join too; without it only cameras join.
   - Whoever you remove by hand (× or emptied output) is not added again. They come back only if you send them to an output yourself, or if they leave and rejoin the studio.
 - **Priority**: a list of names, one per line, the first being the most important.
   - Whoever is on the list joins the group ahead of those with less priority or not on the list. If the outputs are full, the last one goes on standby.

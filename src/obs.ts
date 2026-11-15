@@ -19,6 +19,7 @@
  */
 import { reactive, watch } from "vue";
 import { state, type GroupAction, type GroupView } from "./store";
+import { t } from "./i18n";
 
 export const SEP = " › ";
 
@@ -119,11 +120,11 @@ function connect() {
     pending.clear();
     if (ev.code === 4009) {
       obs.status = "auth";
-      obs.error = "Password obs-websocket errata";
+      obs.error = t("obs.auth");
       return; // non riprovare finché la configurazione non cambia
     }
     obs.status = "error";
-    obs.error = "OBS non raggiungibile";
+    obs.error = t("obs.error");
     retry = window.setTimeout(connect, 3000);
   };
 }
@@ -235,7 +236,7 @@ async function apply(g: GroupView, index: number, set: SceneSet, key: string) {
     await request("SetCurrentProgramScene", { sceneName: action.scene }).catch(() => missing.push(action.scene!));
   }
   applied.set(g.id, { set: index, key });
-  const name = g.sets?.length ? set.name : undefined;
+  const name = g.sets?.length ? (set.name === MAIN_SET ? t("grp.mainSet") : set.name) : undefined;
   obs.groupStatus[g.id] = missing.length ? { kind: "missing", items: missing, set: name } : { kind: "synced", set: name };
 }
 
@@ -253,7 +254,7 @@ export function reconcile() {
       else if (obs.status !== "connected") obs.groupStatus[g.id] = { kind: "offline" };
       else if (index < 0) obs.groupStatus[g.id] = { kind: "away", scene: obs.programScene };
       else if (last?.set !== index || last.key !== key) await apply(g, index, sets[index], key).catch(() => (obs.groupStatus[g.id] = { kind: "offline" }));
-      else if (obs.groupStatus[g.id]?.kind !== "missing") obs.groupStatus[g.id] = { kind: "synced", set: g.sets?.length ? sets[index].name : undefined };
+      else if (obs.groupStatus[g.id]?.kind !== "missing") obs.groupStatus[g.id] = { kind: "synced", set: g.sets?.length ? (index === 0 ? t("grp.mainSet") : sets[index].name) : undefined };
     }
   });
   return running;

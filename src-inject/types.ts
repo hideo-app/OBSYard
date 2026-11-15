@@ -11,6 +11,8 @@ export interface TrackInfo {
   muted: boolean;
   w?: number;
   h?: number;
+  /** persona senza video (camera spenta, solo voce): l'uscita non ha immagine ma porta l'audio */
+  audioOnly?: boolean;
 }
 
 export interface SlotAssign {
@@ -30,6 +32,8 @@ export interface Settings {
   thumbFps: number;
   /** chi va in onda entra da solo nel primo gruppo, in ordine di arrivo */
   autoAdd: boolean;
+  /** l'aggiunta automatica include anche chi ha solo l'audio */
+  autoAddAudio: boolean;
   /** piattaforma aperta nella finestra studio */
   platform: "streamyard" | "discord";
   /** cosa mostrano le uscite senza video (vuote, fuori onda, camera spenta) */

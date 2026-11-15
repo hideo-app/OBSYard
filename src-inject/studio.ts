@@ -146,7 +146,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   /** tracce terminate: servono per ri-agganciare automaticamente lo stesso ospite se riconnette */
   const ended = new Map<string, { kind: string; origin: TrackOrigin; label: string }>();
   let slots: Record<string, SlotAssign> = {};
-  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, platform: "streamyard", emptyBg: "transparent", priority: [], lowerThirds: "off", thumbFps: 0.5 };
+  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, autoAddAudio: false, platform: "streamyard", emptyBg: "transparent", priority: [], lowerThirds: "off", thumbFps: 0.5 };
   let outputs: Output[] = [];
   let thumbsOn = true;
   const counters: Record<TrackOrigin, number> = { remote: 0, camera: 0, screen: 0 };
@@ -181,6 +181,27 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
           w: e.w,
           h: e.h,
         }));
+      // chi ha solo l'audio (camera spenta, solo voce): una sorgente "solo audio" con il suo nome,
+      // da mettere su un'uscita (nessuna immagine, la sua voce) o nei gruppi
+      const visible = [...tracks].filter(([, e]) => onAir(e) !== false);
+      const paired = new Set<MediaStreamTrack>();
+      for (const [, e] of visible) {
+        if (e.track.kind !== "video") continue;
+        const a = pairedAudio(e);
+        if (a) paired.add(a);
+      }
+      for (const [id, e] of visible) {
+        if (e.track.kind !== "audio" || paired.has(e.track) || isScreen(e)) continue;
+        list.push({
+          id: AUDIO_ONLY + id,
+          kind: "video",
+          origin: e.origin,
+          label: labelOf(e).replace(/ \(microfono\)$/, ""),
+          streamIds: e.streamIds,
+          muted: false,
+          audioOnly: true,
+        });
+      }
       invoke("pub_tracks", { tracks: list }).catch(() => {});
     }, 80);
   };
@@ -793,34 +814,43 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     return null;
   };
 
+  /** prefisso degli id delle persone senza video (solo audio): "a:<id della traccia audio>" */
+  const AUDIO_ONLY = "a:";
+
   const resolveSlot = (slot: number): { video: MediaStreamTrack | null; audio: MediaStreamTrack | null } => {
     const a = slots[String(slot)] ?? { video: null, audio: "auto" };
+    // persona senza video: l'uscita non ha immagine ma porta la sua voce
+    if (a.video?.startsWith(AUDIO_ONLY)) {
+      const ae = tracks.get(a.video.slice(AUDIO_ONLY.length));
+      const own = ae && onAir(ae) !== false ? ae.track : null;
+      return { video: null, audio: a.audio === "auto" ? own : resolveId(a.audio, "audio") };
+    }
     const video = resolveId(a.video, "video");
     let audio: MediaStreamTrack | null = null;
     if (a.audio === "auto") {
       // audio dello stesso stream StreamYard (o dello stesso MediaStream) della traccia video
       const vid = uidOf(video);
       const ve = vid ? tracks.get(vid) : undefined;
-      if (ve) {
-        const same = (e: Entry) =>
-          // Discord: stesso utente e stesso tipo (camera o Go Live). Solo questo: Discord può
-          // mettere le tracce di tutti nello stesso MediaStream.
-          IS_DISCORD && ve.dcUser
-            ? e.dcUser === ve.dcUser && e.dcKind === ve.dcKind
-            : // Discord, la nostra camera: il microfono che Discord invia (un'altra traccia, elaborata)
-              IS_DISCORD && ve.origin === "camera"
-              ? e.origin === "camera" && dcSent.has(e.track)
-              : (ve.syStream && e.syStream === ve.syStream) ||
-          (!!localStream.get(ve.track.id) && localStream.get(e.track.id) === localStream.get(ve.track.id)) ||
-          e.streamIds.some((s) => ve.streamIds.includes(s));
-        for (const e of tracks.values())
-          if (e.track.kind === "audio" && same(e)) {
-            audio = e.track;
-            break;
-          }
-      }
+      if (ve) audio = pairedAudio(ve);
     } else audio = resolveId(a.audio, "audio");
     return { video, audio };
+  };
+
+  /** l'audio della stessa persona (e dello stesso tipo: camera o schermo) di una traccia video */
+  const pairedAudio = (ve: Entry): MediaStreamTrack | null => {
+    const same = (e: Entry) =>
+      // Discord: stesso utente e stesso tipo (camera o Go Live). Solo questo: Discord può
+      // mettere le tracce di tutti nello stesso MediaStream.
+      IS_DISCORD && ve.dcUser
+        ? e.dcUser === ve.dcUser && e.dcKind === ve.dcKind
+        : // Discord, la nostra camera: il microfono che Discord invia (un'altra traccia, elaborata)
+          IS_DISCORD && ve.origin === "camera"
+          ? e.origin === "camera" && dcSent.has(e.track)
+          : (ve.syStream && e.syStream === ve.syStream) ||
+            (!!localStream.get(ve.track.id) && localStream.get(e.track.id) === localStream.get(ve.track.id)) ||
+            e.streamIds.some((s) => ve.streamIds.includes(s));
+    for (const e of tracks.values()) if (e.track.kind === "audio" && same(e)) return e.track;
+    return null;
   };
 
   // ---------------------------------------------------- sender verso OBS

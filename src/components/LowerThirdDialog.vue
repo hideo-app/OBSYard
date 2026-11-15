@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive } from "vue";
 import { setLowerThird, titleOf, type TrackInfo } from "../store";
+import { t } from "../i18n";
 
 const props = defineProps<{ track: TrackInfo }>();
 const emit = defineEmits<{ close: [] }>();
@@ -21,23 +22,23 @@ const reset = async () => {
 <template>
   <div class="backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
     <form class="dialog small" @submit.prevent="save">
-      <h2>Sottopancia di {{ track.label }}</h2>
+      <h2>{{ t("ltd.title", { n: track.label }) }}</h2>
       <div class="ltpreview" aria-hidden="true">
         <div class="ltp-name">{{ form.name.trim() || track.label }}</div>
         <div v-if="form.title.trim()" class="ltp-title">{{ form.title }}</div>
       </div>
-      <label class="field">Nome
+      <label class="field">{{ t("ltd.name") }}
         <input v-model="form.name" autofocus maxlength="80" :placeholder="track.label" />
       </label>
-      <label class="field">Seconda riga <small>(ruolo, account… facoltativa)</small>
-        <input v-model="form.title" maxlength="80" placeholder="es. Giornalista · @mario" />
+      <label class="field">{{ t("ltd.second") }} <small>{{ t("ltd.secondNote") }}</small>
+        <input v-model="form.title" maxlength="80" :placeholder="t('ltd.secondPh')" />
       </label>
-      <p class="hint">Resta salvato per questo nome: vale ogni volta che {{ track.label }} torna in onda.</p>
+      <p class="hint">{{ t("ltd.saved", { n: track.label }) }}</p>
       <footer class="dfoot">
-        <button v-if="saved" type="button" class="danger" @click="reset">Ripristina</button>
+        <button v-if="saved" type="button" class="danger" @click="reset">{{ t("ltd.reset") }}</button>
         <span class="spacer" />
-        <button type="button" class="ghost" @click="emit('close')">Annulla</button>
-        <button type="submit" class="primary">Salva</button>
+        <button type="button" class="ghost" @click="emit('close')">{{ t("ltd.cancel") }}</button>
+        <button type="submit" class="primary">{{ t("ltd.save") }}</button>
       </footer>
     </form>
   </div>

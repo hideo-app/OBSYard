@@ -6,6 +6,7 @@ import {
   groupMove, outputStats, outputName, outputsOnScreen, alsoOn, type OutputStats,
 } from "../store";
 import { obs } from "../obs";
+import { t } from "../i18n";
 
 const props = defineProps<{ slot: string | number; fillIndex?: number }>();
 
@@ -28,10 +29,8 @@ const lt = computed(() => state.lowerThirds[String(props.slot)]);
 const dupOf = computed(() => (a.value.video ? alsoOn(a.value.video, props.slot) : []));
 const dupTitle = computed(() => {
   const where = dupOf.value.map((o) => outputName(o)).join(", ");
-  const grouped = state.dups.includes(id.value)
-    ? ". Duplicato nel gruppo: sparisce svuotando l'uscita, mandandoci un'altra sorgente o quando ci arriva un membro"
-    : "";
-  return `La stessa sorgente è anche su ${where}${grouped}`;
+  const grouped = state.dups.includes(id.value) ? t("row.dupGroup") : "";
+  return t("row.dupTitle", { w: where }) + grouped;
 });
 const ltMissing = computed(() => obs.ltMissing[id.value] ?? []);
 const copied = ref(false);
@@ -95,8 +94,8 @@ const altArrow = (d: -1 | 1) => (inGroup.value ? movePerson(d) : move(d));
 const remove = () => {
   menu.value = false;
   const g = group.value;
-  const extra = g ? `\nEsce anche dal gruppo "${g.name}".` : "";
-  if (confirm(`Eliminare l'uscita "${out.value?.name}"? La fonte OBS con questo URL resterà vuota.${extra}`))
+  const extra = g ? t("row.deleteGroup", { g: g.name }) : "";
+  if (confirm(t("row.deleteConfirm", { n: out.value?.name ?? "" }) + extra))
     deleteOutput(id.value);
 };
 
@@ -106,15 +105,15 @@ const canDrop = computed(() => drag.kind === "track" || (drag.kind === "output" 
 /** cosa farà il rilascio, mostrato sull'uscita sotto il puntatore */
 const dropHint = computed(() => {
   if (drag.kind === "track") {
-    if (a.value.video === drag.id) return "È già qui";
-    if (group.value?.members.some((m) => m.track === drag.id)) return "Scambia di posto";
-    return inGroup.value ? "Inserisci qui (il gruppo fa posto)" : video.value ? "Sostituisci" : "Manda qui";
+    if (a.value.video === drag.id) return t("drop.here");
+    if (group.value?.members.some((m) => m.track === drag.id)) return t("drop.swapPlace");
+    return inGroup.value ? t("drop.insert") : video.value ? t("drop.replace") : t("drop.send");
   }
   if (drag.kind === "output") {
     const from = groupOfSlot(drag.id);
-    if (!from && !group.value) return "Scambia le due uscite";
-    if (from && from.id === group.value?.id) return "Scambia di posto";
-    return `Manda qui la sorgente di ${outputName(drag.id)}`;
+    if (!from && !group.value) return t("drop.swap");
+    if (from && from.id === group.value?.id) return t("drop.swapPlace");
+    return t("drop.sendFrom", { o: outputName(drag.id) });
   }
   return "";
 });
@@ -160,7 +159,7 @@ const openStats = () => {
   showStats.value = !showStats.value;
 };
 const stateLabel = (s: string) =>
-  ({ connected: "collegata", connecting: "connessione…", new: "connessione…", failed: "fallita", disconnected: "interrotta", closed: "chiusa" })[s] ?? s;
+  ({ connected: t("st.connected"), connecting: t("st.connecting"), new: t("st.connecting"), failed: t("st.failed"), disconnected: t("st.disconnected"), closed: t("st.closed") })[s] ?? s;
 const mbps = (k?: number) => (k == null ? "…" : (k / 1000).toFixed(1));
 </script>
 
@@ -171,12 +170,12 @@ const mbps = (k?: number) => (k == null ? "…" : (k / 1000).toFixed(1));
     @keydown.alt.up.self.prevent="altArrow(-1)" @keydown.alt.down.self.prevent="altArrow(1)"
     @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
   >
-    <div class="num" :title="(inGroup ? `Posto ${fillIndex} del gruppo · ` : '') + (screenIndex <= 9 ? `Uscita ${screenIndex}: Shift+${screenIndex} manda qui la sorgente selezionata` : `Uscita ${screenIndex}`)">
+    <div class="num" :title="(inGroup ? t('row.place', { n: fillIndex ?? 0 }) : '') + (screenIndex <= 9 ? t('row.shift', { n: screenIndex }) : t('row.output', { n: screenIndex }))">
       {{ screenIndex }}
     </div>
     <div
       class="mini" :class="{ black: outputBg(slot) === 'black', grab: !!a.video }" :draggable="!!a.video"
-      :title="a.video ? 'Trascina su un\'altra uscita per scambiare' : undefined"
+      :title="a.video ? t('row.dragSwap') : undefined"
       @dragstart="onDragStart" @dragend="drag.kind = null"
     >
       <img v-if="video && thumbs[video.id]" :src="thumbs[video.id]" alt="" draggable="false" />
@@ -187,82 +186,82 @@ const mbps = (k?: number) => (k == null ? "…" : (k / 1000).toFixed(1));
           v-if="renaming" ref="nameInput" v-model="draftName" class="rename" maxlength="40"
           @keydown.enter.prevent="commitRename" @keydown.esc.prevent="renaming = false" @blur="commitRename"
         />
-        <strong v-else :title="`/slot/${slot} · doppio clic per rinominare`" @dblclick="startRename">{{ out?.name ?? `Slot ${slot}` }}</strong>
-        <span v-if="tally === 'program'" class="tag air" title="Questa uscita è in programma in OBS">ON AIR</span>
-        <span v-else-if="tally === 'preview'" class="tag pre" title="Questa uscita è visibile in OBS (anteprima), non in programma">ANTEPRIMA</span>
-        <span v-if="dupOf.length" class="tag dup" :title="dupTitle">duplicato</span>
-        <span v-if="inTest" class="tag test" title="Prova di riempimento: termina svuotando questa uscita o con la × sotto il gruppo">prova</span>
-        <span v-if="out?.bg" class="tag" title="Eccezione allo sfondo globale senza video">{{ out.bg === "black" ? "nero" : "trasparente" }}</span>
-        <span v-if="ltMissing.length" class="tag bad" :title="`In OBS mancano le fonti Testo:\n${ltMissing.join('\n')}\nCreale da Sottopancia → Crea in OBS`">testo mancante</span>
+        <strong v-else :title="t('row.renameTitle', { id: slot })" @dblclick="startRename">{{ out?.name ?? `Slot ${slot}` }}</strong>
+        <span v-if="tally === 'program'" class="tag air" :title="t('row.onAirTitle')">ON AIR</span>
+        <span v-else-if="tally === 'preview'" class="tag pre" :title="t('row.previewTitle')">{{ t("card.preview") }}</span>
+        <span v-if="dupOf.length" class="tag dup" :title="dupTitle">{{ t("row.dup") }}</span>
+        <span v-if="inTest" class="tag test" :title="t('row.testTitle')">{{ t("row.test") }}</span>
+        <span v-if="out?.bg" class="tag" :title="t('row.bgTitle')">{{ out.bg === "black" ? t("row.black") : t("row.transparent") }}</span>
+        <span v-if="ltMissing.length" class="tag bad" :title="t('row.textMissingTitle', { l: ltMissing.join('\n') })">{{ t("row.textMissing") }}</span>
       </div>
-      <select :value="a.video ?? ''" aria-label="Sorgente video" @change="setVideo">
-        <option value="">{{ inGroup ? "— vuoto (togli dal gruppo) —" : "— vuoto —" }}</option>
-        <option v-if="a.video && !video" :value="a.video">(fuori onda o disconnesso)</option>
-        <option v-for="t in videoTracks" :key="t.id" :value="t.id">{{ t.label }}</option>
+      <select :value="a.video ?? ''" :aria-label="t('row.videoSource')" @change="setVideo">
+        <option value="">{{ inGroup ? t("row.emptyGroup") : t("row.empty") }}</option>
+        <option v-if="a.video && !video" :value="a.video">{{ t("row.gone") }}</option>
+        <option v-for="tr in videoTracks" :key="tr.id" :value="tr.id">{{ tr.audioOnly ? `${tr.label} (${t("card.audioOnly").toLowerCase()})` : tr.label }}</option>
       </select>
-      <select v-if="!inGroup" :value="a.audio ?? ''" aria-label="Sorgente audio" @change="setAudio">
-        <option value="auto">Audio: automatico</option>
-        <option value="">Audio: nessuno</option>
-        <option v-for="t in audioTracks" :key="t.id" :value="t.id">Audio: {{ t.label }}</option>
+      <select v-if="!inGroup" :value="a.audio ?? ''" :aria-label="t('row.audioSource')" @change="setAudio">
+        <option value="auto">{{ t("row.audioAuto") }}</option>
+        <option value="">{{ t("row.audioNone") }}</option>
+        <option v-for="tr in audioTracks" :key="tr.id" :value="tr.id">{{ t("row.audioOf", { l: tr.label }) }}</option>
       </select>
-      <div v-if="lt" class="ltline" :title="state.settings.lowerThirds === 'obs' ? 'Sottopancia nelle fonti Testo di OBS' : 'Sottopancia disegnato sull\'uscita'">
+      <div v-if="lt" class="ltline" :title="state.settings.lowerThirds === 'obs' ? t('row.ltObs') : t('row.ltPage')">
         <span class="ltmark">Aa</span> {{ lt.name }}<template v-if="lt.title"> · {{ lt.title }}</template>
       </div>
     </div>
-    <button class="url" :title="`${slotUrl(slot)}\nCon il nome: ${slotNameUrl(slot)} (menu ⋮)`" @click="copy()">{{ copied ? "Copiato!" : "Copia URL" }}</button>
-    <span v-if="native" class="tag plug" title="La sorgente OBSYard del plugin OBS legge questa uscita: immagine e audio senza ricodifica">plugin</span>
+    <button class="url" :title="t('row.copyTitle', { u: slotUrl(slot), n: slotNameUrl(slot) })" @click="copy()">{{ copied ? t("row.copied") : t("row.copyUrl") }}</button>
+    <span v-if="native" class="tag plug" :title="t('row.pluginTitle')">{{ t("row.plugin") }}</span>
     <button
       class="obs" :class="{ on: viewers, open: showStats }" :aria-expanded="showStats"
-      :title="viewers ? `${viewers} fonti OBS collegate: clic per i dettagli della connessione` : 'Nessuna fonte OBS ha aperto questa uscita'"
+      :title="viewers ? t('row.viewersTitle', { n: viewers }) : t('row.noViewers')"
       @click="openStats"
     ><span class="led" />OBS {{ viewers }}</button>
     <div class="omenu-wrap">
-      <button class="icon" title="Altre azioni" aria-haspopup="menu" :aria-expanded="menu" @click="menu = !menu">⋮</button>
+      <button class="icon" :title="t('row.more')" aria-haspopup="menu" :aria-expanded="menu" @click="menu = !menu">⋮</button>
       <div v-if="menu" class="omenu" role="menu">
-        <button role="menuitem" @click="startRename">Rinomina</button>
-        <button role="menuitem" :title="slotNameUrl(slot)" @click="copy(true)">Copia URL con il nome</button>
+        <button role="menuitem" @click="startRename">{{ t("row.rename") }}</button>
+        <button role="menuitem" :title="slotNameUrl(slot)" @click="copy(true)">{{ t("row.copyByName") }}</button>
         <template v-if="inGroup && a.video">
-          <button role="menuitem" @click="movePerson(-1)">Persona su <kbd>Alt+↑</kbd></button>
-          <button role="menuitem" @click="movePerson(1)">Persona giù <kbd>Alt+↓</kbd></button>
+          <button role="menuitem" @click="movePerson(-1)">{{ t("row.personUp") }} <kbd>Alt+↑</kbd></button>
+          <button role="menuitem" @click="movePerson(1)">{{ t("row.personDown") }} <kbd>Alt+↓</kbd></button>
         </template>
-        <button role="menuitem" @click="move(-1)">Sposta uscita su <kbd v-if="!inGroup">Alt+↑</kbd></button>
-        <button role="menuitem" @click="move(1)">Sposta uscita giù <kbd v-if="!inGroup">Alt+↓</kbd></button>
-        <button role="menuitem" @click="openStats">{{ showStats ? "Nascondi" : "Mostra" }} dettagli connessione</button>
+        <button role="menuitem" @click="move(-1)">{{ t("row.outUp") }} <kbd v-if="!inGroup">Alt+↑</kbd></button>
+        <button role="menuitem" @click="move(1)">{{ t("row.outDown") }} <kbd v-if="!inGroup">Alt+↓</kbd></button>
+        <button role="menuitem" @click="openStats">{{ showStats ? t("row.hideStats") : t("row.showStats") }}</button>
         <button v-if="state.settings.lowerThirds !== 'off'" role="menuitemcheckbox" :aria-checked="!!out?.lt" @click="toggleLt">
-          {{ out?.lt ? "✓ " : "" }}Sottopancia su questa uscita
+          {{ out?.lt ? "✓ " : "" }}{{ t("row.ltHere") }}
         </button>
-        <div class="msep">Senza video</div>
+        <div class="msep">{{ t("out.emptyBg") }}</div>
         <button role="menuitemradio" :aria-checked="bgChoice === 'default'" @click="setBg('default')">
-          {{ bgChoice === "default" ? "✓ " : "" }}Come impostazione ({{ state.settings.emptyBg === "black" ? "nero" : "trasparente" }})
+          {{ bgChoice === "default" ? "✓ " : "" }}{{ t("row.asSetting", { b: state.settings.emptyBg === "black" ? t("row.black") : t("row.transparent") }) }}
         </button>
         <button role="menuitemradio" :aria-checked="bgChoice === 'transparent'" @click="setBg('transparent')">
-          {{ bgChoice === "transparent" ? "✓ " : "" }}Trasparente
+          {{ bgChoice === "transparent" ? "✓ " : "" }}{{ t("out.transparent") }}
         </button>
         <button role="menuitemradio" :aria-checked="bgChoice === 'black'" @click="setBg('black')">
-          {{ bgChoice === "black" ? "✓ " : "" }}Nero
+          {{ bgChoice === "black" ? "✓ " : "" }}{{ t("out.black") }}
         </button>
         <div class="msep" />
-        <button role="menuitem" class="danger" @click="remove">Elimina…</button>
+        <button role="menuitem" class="danger" @click="remove">{{ t("row.delete") }}</button>
       </div>
     </div>
 
     <div v-if="over && canDrop" class="drophint">{{ dropHint }}</div>
 
     <div v-if="showStats" class="stats">
-      <p v-if="!viewers" class="hint">Nessuna fonte OBS ha aperto questa uscita: aggiungi in OBS una Fonte browser con il suo URL.</p>
-      <p v-else-if="!stats.length" class="hint">Leggo la connessione…</p>
+      <p v-if="!viewers" class="hint">{{ t("st.none") }}</p>
+      <p v-else-if="!stats.length" class="hint">{{ t("st.reading") }}</p>
       <dl v-for="(s, i) in stats" :key="i">
-        <div><dt>Fonte {{ stats.length > 1 ? i + 1 : "" }}</dt><dd :class="s.state === 'connected' ? 'good' : 'badv'">{{ stateLabel(s.state) }}</dd></div>
-        <div><dt>In OBS</dt><dd>{{ s.program ? "in programma" : s.visible ? "visibile (anteprima)" : "non in onda" }}</dd></div>
+        <div><dt>{{ t("st.source") }} {{ stats.length > 1 ? i + 1 : "" }}</dt><dd :class="s.state === 'connected' ? 'good' : 'badv'">{{ stateLabel(s.state) }}</dd></div>
+        <div><dt>{{ t("st.inObs") }}</dt><dd>{{ s.program ? t("st.program") : s.visible ? t("st.visible") : t("st.offAir") }}</dd></div>
         <template v-if="s.w">
-          <div><dt>Video</dt><dd>{{ s.w }}×{{ s.h }} · {{ Math.round(s.fps ?? 0) }} fps</dd></div>
-          <div><dt>Bitrate</dt><dd>{{ mbps(s.kbps) }} Mbps</dd></div>
-          <div><dt>Codec</dt><dd :title="s.decoder">{{ s.codec || "?" }}</dd></div>
-          <div><dt>Ritardo</dt><dd>buffer {{ s.jitterMs ?? "?" }} ms · RTT {{ s.rttMs ?? "?" }} ms</dd></div>
-          <div class="wide"><dt>Persi</dt><dd :class="{ badv: (s.lost ?? 0) > 0 }">{{ s.lost ?? 0 }} pacchetti · {{ s.dropped ?? 0 }} fotogrammi · {{ s.freezes ?? 0 }} blocchi</dd></div>
+          <div><dt>{{ t("st.video") }}</dt><dd>{{ s.w }}×{{ s.h }} · {{ Math.round(s.fps ?? 0) }} fps</dd></div>
+          <div><dt>{{ t("st.bitrate") }}</dt><dd>{{ mbps(s.kbps) }} Mbps</dd></div>
+          <div><dt>{{ t("st.codec") }}</dt><dd :title="s.decoder">{{ s.codec || "?" }}</dd></div>
+          <div><dt>{{ t("st.delay") }}</dt><dd>{{ t("st.delayValue", { j: s.jitterMs ?? "?", r: s.rttMs ?? "?" }) }}</dd></div>
+          <div class="wide"><dt>{{ t("st.lost") }}</dt><dd :class="{ badv: (s.lost ?? 0) > 0 }">{{ t("st.lostValue", { p: s.lost ?? 0, f: s.dropped ?? 0, z: s.freezes ?? 0 }) }}</dd></div>
         </template>
-        <div v-else><dt>Video</dt><dd>nessun fotogramma</dd></div>
-        <div><dt>Audio</dt><dd>{{ s.audio ? "sì" : "no" }}</dd></div>
+        <div v-else><dt>{{ t("st.video") }}</dt><dd>{{ t("st.noFrames") }}</dd></div>
+        <div><dt>{{ t("st.audio") }}</dt><dd>{{ s.audio ? t("st.yes") : t("st.no") }}</dd></div>
       </dl>
     </div>
   </div>

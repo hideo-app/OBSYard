@@ -294,3 +294,9 @@ html { scrollbar-gutter: stable; }
 .copt.primary small { color: rgb(255 255 255 / .85); }
 .copt.plain { background: transparent; }
 .tag.plug { background: #143d2b; border-color: #1f5a41; color: var(--ok); font-weight: 600; }
+/* ---------- persone solo audio, opzioni secondarie ---------- */
+.aonly { display: grid; place-items: center; gap: 4px; color: #a9b1c4; }
+.aonly span { font-size: 12px; }
+.card.audioonly .thumb { background: linear-gradient(135deg, #1b2130, #11141c); }
+.check.sub { margin: 6px 0 0 24px; font-size: 12px; }
+.check.dim { opacity: .5; }

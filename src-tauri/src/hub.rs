@@ -97,6 +97,9 @@ pub struct Settings {
     /// chi va in onda entra da solo nel primo gruppo, in ordine di arrivo
     #[serde(default)]
     pub auto_add: bool,
+    /// l'aggiunta automatica include anche chi ha solo l'audio (camera spenta, solo voce)
+    #[serde(default)]
+    pub auto_add_audio: bool,
     /// piattaforma aperta nella finestra studio: "streamyard" o "discord"
     #[serde(default = "default_platform")]
     pub platform: String,
@@ -149,7 +152,7 @@ fn default_full_res_layout() -> String {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { codec: "H264".into(), max_bitrate_kbps: 12_000, max_fps: 60, full_res_layout: default_full_res_layout(), thumb_fps: default_thumb_fps(), auto_add: false, platform: default_platform(), empty_bg: default_empty_bg(), priority: vec![], lower_thirds: default_lower_thirds() }
+        Self { codec: "H264".into(), max_bitrate_kbps: 12_000, max_fps: 60, full_res_layout: default_full_res_layout(), thumb_fps: default_thumb_fps(), auto_add: false, auto_add_audio: false, platform: default_platform(), empty_bg: default_empty_bg(), priority: vec![], lower_thirds: default_lower_thirds() }
     }
 }
 
@@ -412,6 +415,8 @@ let p = Persisted {
             .map(|a| {
                 a.iter()
                     .filter(|t| t["kind"] == "video" && t["origin"] != "screen")
+                    // chi ha solo l'audio entra solo se l'opzione lo include
+                    .filter(|t| t["audioOnly"] != true || self.settings.auto_add_audio)
                     .filter_map(|t| Some((t["id"].as_str()?.to_string(), t["label"].as_str().unwrap_or("").to_string())))
                     .collect()
             })
