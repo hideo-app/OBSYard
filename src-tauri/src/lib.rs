@@ -98,9 +98,10 @@ fn get_state(hub: State<SharedHub>) -> Value {
 }
 
 #[tauri::command]
-fn assign(hub: State<SharedHub>, slot: u32, assign: SlotAssign, fill: Option<bool>) -> Value {
-    // dalla Regia: chiede la prova di riempimento; fill = true quando confermata
-    hub.lock().unwrap().assign(slot, assign, if fill == Some(true) { "fill" } else { "ask" })
+fn assign(hub: State<SharedHub>, slot: u32, assign: SlotAssign, fill: Option<bool>, dup: Option<bool>, queue: Option<bool>) -> Value {
+    // dalla Regia: chiede la prova di riempimento; fill = true quando confermata, dup = true "Duplica"
+    let mode = if dup == Some(true) { "dup" } else if fill == Some(true) { "fill" } else if queue == Some(true) { "queue" } else { "ask" };
+    hub.lock().unwrap().assign(slot, assign, mode)
 }
 
 #[tauri::command]

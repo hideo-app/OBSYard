@@ -183,6 +183,8 @@ struct Persisted {
     obs: ObsConfig,
     /// sottopancia per nome (minuscolo, spazi normalizzati)
     titles: BTreeMap<String, LowerThird>,
+    /// interruttore "piena risoluzione"
+    full_res: bool,
 }
 
 pub struct Viewer {
@@ -254,6 +256,7 @@ impl Hub {
                     self.obs = p.obs;
                     self.last_output_id = p.last_output_id;
                     self.titles = p.titles;
+                    self.full_res = p.full_res;
                 }
                 Err(e) => eprintln!("[obsyard] config non valida, ignorata: {e}"),
             }
@@ -375,6 +378,7 @@ let p = Persisted {
             groups: self.groups.configs.clone(),
             obs: self.obs.clone(),
             titles: self.titles.clone(),
+            full_res: self.full_res,
         };
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -433,6 +437,7 @@ let p = Persisted {
         let is_live = |t: &str| live.iter().any(|(id, _)| id == t);
         // la prova di riempimento finisce quando cambiano i membri connessi
         self.groups.expire_fills(&is_live);
+        self.groups.expire_dups(&is_live);
         let mut changed = false;
         for (slot, track) in self.groups.fill(&is_live) {
             let a = SlotAssign { video: track, audio: Some("auto".into()) };
@@ -611,6 +616,7 @@ let p = Persisted {
 
     pub fn set_full_res(&mut self, on: bool) {
         self.full_res = on;
+        self.persist();
         self.push_full_res();
         self.emit_state();
     }
@@ -656,6 +662,7 @@ let p = Persisted {
             .filter_map(|o| self.lower_third_of(o.id).map(|(name, title, kind)| (o.id, json!({"name": name, "title": title, "kind": kind}))))
             .collect();
         json!({
+            "dups": self.groups.dup_slots(),
             "tally": tally,
             "lowerThirds": lower_thirds,
             "titles": self.titles,
@@ -754,6 +761,28 @@ let p = Persisted {
     /// riempimento), "fill" (confermato: avvia la prova), "queue" (API: nessuna domanda, in coda).
     /// Ritorna null, oppure {"ask": {...}} con quello che serve per la domanda.
     pub fn assign(&mut self, slot: u32, a: SlotAssign, mode: &str) -> Value {
+        // "dup": la stessa sorgente anche su un'uscita libera del gruppo (Regia: "Duplica")
+        if mode == "dup" {
+            if let Some(track) = a.video.as_deref() {
+                let live = self.live_video();
+                let label = live.iter().find(|(id, _)| id == track).map(|(_, l)| l.clone()).unwrap_or_default();
+                if self.groups.set_dup(slot, track, &label, &|t: &str| live.iter().any(|(id, _)| id == t)) {
+                    self.apply_groups();
+                } else if self.groups.group_of_slot(slot).is_none() {
+                    self.slots.insert(slot, a); // fuori dai gruppi un duplicato è un'assegnazione normale
+                }
+                self.push_slots();
+                self.emit_state();
+                return Value::Null;
+            }
+        }
+        // qualsiasi altra scelta su quest'uscita toglie il duplicato; se era solo quello, basta così
+        if self.groups.clear_dup(slot) && a.video.is_none() {
+            self.apply_groups();
+            self.push_slots();
+            self.emit_state();
+            return Value::Null;
+        }
         if let Some(gid) = self.groups.group_of_slot(slot) {
             let live = self.live_video();
             let is_live = |t: &str| live.iter().any(|(id, _)| id == t);
@@ -802,7 +831,7 @@ let p = Persisted {
                 }
                 let _ = w.set_title(platform_title(&s.platform));
             }
-            self.full_res = false;
+            self.full_res = false; // salvato più sotto con le impostazioni
         }
         s.priority = s.priority.iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
         let layout_changed = s.full_res_layout != self.settings.full_res_layout;

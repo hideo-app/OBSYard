@@ -283,3 +283,13 @@ html { scrollbar-gutter: stable; }
 .platform { padding: 3px 8px; font-size: 13px; font-weight: 600; }
 .hsel { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .hsel select { padding: 3px 6px; font-size: 12px; }
+
+/* ---------- duplicati e finestra di scelta ---------- */
+.tag.dup { background: #3d3214; border-color: #5a4a1e; color: var(--warn); }
+.choice h2 { margin-bottom: 6px; }
+.ctext { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+.copts { display: grid; gap: 8px; }
+.copt { display: grid; gap: 2px; text-align: left; padding: 10px 12px; }
+.copt small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.copt.primary small { color: rgb(255 255 255 / .85); }
+.copt.plain { background: transparent; }

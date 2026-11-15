@@ -11,6 +11,7 @@ import SlotRow from "./components/SlotRow.vue";
 import GroupBox from "./components/GroupBox.vue";
 import GroupDialog from "./components/GroupDialog.vue";
 import LowerThirdDialog from "./components/LowerThirdDialog.vue";
+import ChoiceDialog from "./components/ChoiceDialog.vue";
 
 const error = ref<string | null>(null);
 const draft = ref<Settings>({ ...state.settings });
@@ -355,4 +356,5 @@ const ltModeLabel = computed(() => ({ off: "spenti", page: "sull'uscita", obs: "
 
   <GroupDialog v-if="editing !== undefined" :group="editing" @close="editing = undefined" />
   <LowerThirdDialog v-if="ltEditing" :track="ltEditing" @close="ltEditing = null" />
+  <ChoiceDialog />
 </template>

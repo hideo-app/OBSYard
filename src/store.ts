@@ -14,6 +14,7 @@ export const state = reactive<AppState>({
   outputs: [],
   slots: {},
   viewers: {},
+  dups: [],
   tally: {},
   lowerThirds: {},
   titles: {},
@@ -121,20 +122,73 @@ export async function init() {
  * Manda una sorgente su un'uscita. Su un'uscita di gruppo oltre la prima libera OBSYard chiede
  * (come guestroom) se avviare la prova di riempimento: la persona va lì e sulle uscite libere prima.
  */
+// ------------------------------------------------- finestra di scelta
+export interface ChoiceOption { value: string; label: string; hint?: string; primary?: boolean; danger?: boolean }
+/** domanda aperta nella Regia (ChoiceDialog): titolo, testo, opzioni; si risolve con il valore scelto o null */
+export const choice = reactive<{ open: boolean; title: string; text: string; warn?: string; options: ChoiceOption[]; resolve?: (v: string | null) => void }>({
+  open: false, title: "", text: "", options: [],
+});
+export const askChoice = (title: string, text: string, options: ChoiceOption[], warn?: string) =>
+  new Promise<string | null>((resolve) => {
+    choice.resolve?.(null);
+    Object.assign(choice, { open: true, title, text, warn, options, resolve });
+  });
+export const answerChoice = (v: string | null) => {
+  const r = choice.resolve;
+  Object.assign(choice, { open: false, resolve: undefined });
+  r?.(v);
+};
+
+/** uscite (diverse da `slot`) che mostrano già questo video */
+export const alsoOn = (track: string, slot?: number | string) =>
+  outputsOnScreen.value.filter((n) => n !== Number(slot) && state.slots[String(n)]?.video === track);
+
+/**
+ * Manda una sorgente su un'uscita.
+ * - Se la sorgente è già su un'altra uscita e quella scelta è un'uscita LIBERA di un gruppo, la
+ *   Regia chiede: Duplica (anche lì, avviso "duplicato"), Sposta (regole del gruppo) o Annulla.
+ * - Su un'uscita di gruppo oltre la prima libera chiede (come guestroom) se avviare la prova di
+ *   riempimento: la persona va lì e sulle uscite libere prima.
+ */
 export const assign = async (slot: number | string, a: SlotAssign) => {
+  const n = Number(slot);
+  const g = groupOfSlot(n);
+  if (a.video && g && !state.slots[String(n)]?.video) {
+    const others = alsoOn(a.video, n);
+    if (others.length) {
+      const who = trackById(a.video)?.label || "Questa sorgente";
+      const where = others.map((o) => outputName(o)).join(", ");
+      const pick = await askChoice(
+        `${who} è già su ${where}`,
+        `${outputName(n)} è un'uscita libera di ${g.name}.`,
+        [
+          { value: "dup", label: `Duplica su ${outputName(n)}`, hint: `Resta anche su ${where}: la stessa persona su due uscite`, primary: true },
+          { value: "move", label: `Sposta su ${outputName(n)}`, hint: `Come sempre nei gruppi: cambia posto nel gruppo` },
+          { value: "cancel", label: "Annulla" },
+        ],
+      );
+      if (pick === "dup") return void (await invoke("assign", { slot: n, assign: a, dup: true }));
+      if (pick !== "move") return;
+    }
+  }
   const r = await invoke<{ ask?: { group: string; name: string; chosen: number; landed: number } } | null>("assign", {
-    slot: Number(slot),
+    slot: n,
     assign: a,
   });
   if (!r?.ask) return;
   const { group, name, chosen, landed } = r.ask;
   const who = name || "questa sorgente";
-  const ok = confirm(
-    `${outputName(chosen)} è oltre le persone in ${group}: il gruppo riempie le uscite in ordine, quindi ${who} andrebbe su ${outputName(landed)}.\n\n` +
-      `Riempire comunque tutte le uscite fino a ${outputName(chosen)} con ${who}? Utile per provare da solo le scene con più persone.\n\n` +
-      `OK = riempi fino a ${outputName(chosen)} (prova) · Annulla = lascia com'è`,
+  const pick = await askChoice(
+    `${outputName(chosen)} è oltre le persone in ${group}`,
+    `Il gruppo riempie le uscite in ordine, quindi ${who} andrebbe su ${outputName(landed)}.`,
+    [
+      { value: "fill", label: `Riempi fino a ${outputName(chosen)}`, hint: `Prova: ${who} su ${outputName(chosen)} e sulle uscite libere prima. Utile per provare da solo le scene con più persone`, primary: true },
+      { value: "keep", label: `Va su ${outputName(landed)}` },
+      { value: "cancel", label: "Annulla" },
+    ],
   );
-  if (ok) await invoke("assign", { slot: Number(slot), assign: a, fill: true });
+  if (pick === "fill") await invoke("assign", { slot: n, assign: a, fill: true });
+  else if (pick === "keep") await invoke("assign", { slot: n, assign: a, queue: true });
 };
 
 /** manda una sorgente su un'uscita tenendo l'audio che l'uscita ha già scelto */

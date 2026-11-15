@@ -123,7 +123,7 @@ StreamYard lets each guest decide their resolution: the height of their tile in 
 | group / thin | 960×540 |
 | full-height tile | 1280×720 |
 
-In the control room turn on **Guests at full resolution**: OBSYard prepares the layout, selects it and remembers the previous one. Turning it off goes back to the previous one.
+In the control room turn on **Guests at full resolution**: OBSYard prepares the layout, selects it and remembers the previous one. Turning it off goes back to the previous one. The switch's state is saved from one start to the next.
 
 - **The "OBSYard" layout is defined by OBSYard**: one full-height column per camera the plan can have on air (StreamYard tells the number when you join the studio). Only the height counts, so every guest sends at their maximum.
 - If the layout is missing, or someone edited it, OBSYard creates it or **overwrites** it through the same API as StreamYard's editor (`/api/workspaces/{ws}/layouts`). It uses fixed ids and writes only when something differs.
@@ -167,7 +167,14 @@ It works like guestroom's "test fill", to try on your own scenes meant for sever
 - OBS actions count every filled output.
 - Under the group a **yellow notice** says who is there and up to where, with a × to end the test. The test's outputs carry the *test* tag.
 - The test also ends when you empty one of its outputs or when the group's members change.
-- Outside groups the same source can already go on as many outputs as you like.
+- Outside groups the same source can go on as many outputs as you like.
+
+### Duplicates (same source on several outputs)
+
+- Outside groups, just send the source to another output.
+- On a **free** output of a group, if the source is already on another output, the control room asks: **Duplicate** (it also stays where it was), **Move** (the group's rules) or **Cancel**.
+- A duplicate does not change the group's order and counts as a filled output for OBS actions. It goes away when the output is emptied, given another source, when a group member lands there or when the person leaves.
+- Every output showing a source that is also elsewhere carries a yellow **duplicate** tag, with the other outputs in its tooltip.
 
 ### Auto-add and priority
 

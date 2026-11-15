@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import {
   state, thumbs, assign, videoTracks, audioTracks, trackById, slotUrl, slotNameUrl, outputById,
   updateOutput, moveOutput, deleteOutput, groupOfSlot, outputBg, tallyOf, drag, sendTo, swapOutputs,
-  groupMove, outputStats, outputName, outputsOnScreen, type OutputStats,
+  groupMove, outputStats, outputName, outputsOnScreen, alsoOn, type OutputStats,
 } from "../store";
 import { obs } from "../obs";
 
@@ -22,6 +22,15 @@ const screenIndex = computed(() => outputsOnScreen.value.indexOf(id.value) + 1);
 /** uscita riempita dalla prova di riempimento del gruppo */
 const inTest = computed(() => !!group.value?.testFill?.slots.includes(id.value));
 const lt = computed(() => state.lowerThirds[String(props.slot)]);
+/** altre uscite che mostrano lo stesso video: avviso "duplicato" */
+const dupOf = computed(() => (a.value.video ? alsoOn(a.value.video, props.slot) : []));
+const dupTitle = computed(() => {
+  const where = dupOf.value.map((o) => outputName(o)).join(", ");
+  const grouped = state.dups.includes(id.value)
+    ? ". Duplicato nel gruppo: sparisce svuotando l'uscita, mandandoci un'altra sorgente o quando ci arriva un membro"
+    : "";
+  return `La stessa sorgente è anche su ${where}${grouped}`;
+});
 const ltMissing = computed(() => obs.ltMissing[id.value] ?? []);
 const copied = ref(false);
 
@@ -179,6 +188,7 @@ const mbps = (k?: number) => (k == null ? "…" : (k / 1000).toFixed(1));
         <strong v-else :title="`/slot/${slot} · doppio clic per rinominare`" @dblclick="startRename">{{ out?.name ?? `Slot ${slot}` }}</strong>
         <span v-if="tally === 'program'" class="tag air" title="Questa uscita è in programma in OBS">ON AIR</span>
         <span v-else-if="tally === 'preview'" class="tag pre" title="Questa uscita è visibile in OBS (anteprima), non in programma">ANTEPRIMA</span>
+        <span v-if="dupOf.length" class="tag dup" :title="dupTitle">duplicato</span>
         <span v-if="inTest" class="tag test" title="Prova di riempimento: termina svuotando questa uscita o con la × sotto il gruppo">prova</span>
         <span v-if="out?.bg" class="tag" title="Eccezione allo sfondo globale senza video">{{ out.bg === "black" ? "nero" : "trasparente" }}</span>
         <span v-if="ltMissing.length" class="tag bad" :title="`In OBS mancano le fonti Testo:\n${ltMissing.join('\n')}\nCreale da Sottopancia → Crea in OBS`">testo mancante</span>

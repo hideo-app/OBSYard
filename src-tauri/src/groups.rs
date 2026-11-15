@@ -125,6 +125,10 @@ pub struct Groups {
     /// tolti a mano da un gruppo: l'aggiunta automatica non li riaggiunge
     excluded: HashSet<String>,
     fills: HashMap<u32, TestFill>,
+    /// Duplicati: uscita di un gruppo -> chi ci mostriamo anche (già su un'altra uscita).
+    /// Solo su uscite libere: non cambia l'ordine del gruppo; sparisce quando l'uscita si svuota,
+    /// riceve un'altra sorgente, ci arriva un membro o la persona esce di scena.
+    dups: BTreeMap<u32, (String, String)>,
 }
 
 /// Esito di "manda questa persona su questa uscita del gruppo".
@@ -158,7 +162,7 @@ pub fn rank(priority: &[String], label: &str) -> usize {
 
 impl Groups {
     pub fn from_configs(configs: Vec<GroupConfig>) -> Self {
-        Self { configs, members: HashMap::new(), excluded: HashSet::new(), fills: HashMap::new() }
+        Self { configs, members: HashMap::new(), excluded: HashSet::new(), fills: HashMap::new(), dups: BTreeMap::new() }
     }
 
     pub fn group_of_slot(&self, slot: u32) -> Option<u32> {
@@ -177,36 +181,82 @@ impl Groups {
             .unwrap_or_default()
     }
 
-    /// Cosa deve mostrare ogni slot dei gruppi.
-    pub fn fill(&self, is_live: &dyn Fn(&str) -> bool) -> Vec<(u32, Option<String>)> {
-        let mut out = vec![];
-        for g in &self.configs {
-            let live = self.live_idx(g.id, is_live);
-            let members = self.members.get(&g.id);
-            let test = self.fills.get(&g.id);
-            for (i, slot) in g.slots.iter().enumerate() {
+    /// Cosa mostra ogni uscita di un gruppo: il membro connesso di quel posto, altrimenti la
+    /// prova di riempimento, altrimenti un duplicato.
+    fn cells(&self, g: &GroupConfig, is_live: &dyn Fn(&str) -> bool) -> Vec<(u32, Option<String>)> {
+        let live = self.live_idx(g.id, is_live);
+        let members = self.members.get(&g.id);
+        let test = self.fills.get(&g.id);
+        g.slots
+            .iter()
+            .enumerate()
+            .map(|(i, slot)| {
                 let t = live
                     .get(i)
                     .and_then(|&k| members.map(|m| m[k].track.clone()))
                     // oltre le persone in onda: le uscite della prova di riempimento
-                    .or_else(|| test.and_then(|f| f.cells.get(&i)).filter(|(t, _)| is_live(t)).map(|(t, _)| t.clone()));
-                out.push((*slot, t));
-            }
-        }
-        out
+                    .or_else(|| test.and_then(|f| f.cells.get(&i)).filter(|(t, _)| is_live(t)).map(|(t, _)| t.clone()))
+                    .or_else(|| self.dups.get(slot).filter(|(t, _)| is_live(t)).map(|(t, _)| t.clone()));
+                (*slot, t)
+            })
+            .collect()
     }
 
-    /// Numero di partecipanti che contano per le azioni OBS (0..=slot): con la prova contano
-    /// tutte le uscite riempite.
+    /// Cosa deve mostrare ogni slot dei gruppi.
+    pub fn fill(&self, is_live: &dyn Fn(&str) -> bool) -> Vec<(u32, Option<String>)> {
+        self.configs.iter().flat_map(|g| self.cells(g, is_live)).collect()
+    }
+
+    /// Numero di partecipanti che contano per le azioni OBS (0..=slot): le uscite che mostrano
+    /// qualcuno, comprese prova di riempimento e duplicati.
     pub fn count(&self, gid: u32, is_live: &dyn Fn(&str) -> bool) -> u32 {
-        let n = self.cfg(gid).map(|g| g.slots.len()).unwrap_or(0);
-        let live = self.live_idx(gid, is_live).len().min(n);
-        let test = self
-            .fills
-            .get(&gid)
-            .map(|f| f.cells.iter().filter(|(i, (t, _))| **i >= live && **i < n && is_live(t)).count())
-            .unwrap_or(0);
-        (live + test).min(n) as u32
+        self.cfg(gid).map(|g| self.cells(g, is_live).iter().filter(|(_, t)| t.is_some()).count() as u32).unwrap_or(0)
+    }
+
+    /// Duplica `track` sull'uscita libera `slot` di un gruppo. Ritorna false se l'uscita non è
+    /// di un gruppo o non è libera (lì c'è un membro: si usa place, che scambia o inserisce).
+    pub fn set_dup(&mut self, slot: u32, track: &str, label: &str, is_live: &dyn Fn(&str) -> bool) -> bool {
+        let Some(g) = self.configs.iter().find(|g| g.slots.contains(&slot)) else { return false };
+        let pos = g.slots.iter().position(|s| *s == slot).unwrap_or(0);
+        if pos < self.live_idx(g.id, is_live).len() {
+            return false;
+        }
+        // una cella della prova su quell'uscita lascia il posto al duplicato
+        if let Some(f) = self.fills.get_mut(&g.id) {
+            f.cells.remove(&pos);
+        }
+        self.dups.insert(slot, (track.into(), label.into()));
+        true
+    }
+
+    /// Toglie il duplicato da un'uscita. Ritorna true se c'era.
+    pub fn clear_dup(&mut self, slot: u32) -> bool {
+        self.dups.remove(&slot).is_some()
+    }
+
+    /// Uscite che mostrano un duplicato.
+    pub fn dup_slots(&self) -> Vec<u32> {
+        self.dups.keys().copied().collect()
+    }
+
+    /// Duplicati che non valgono più: persona uscita di scena, uscita tolta dal gruppo, oppure un
+    /// membro arrivato su quel posto (il gruppo ha la precedenza). Ritorna true se ne è sparito uno.
+    pub fn expire_dups(&mut self, is_live: &dyn Fn(&str) -> bool) -> bool {
+        let before = self.dups.len();
+        let keep: Vec<u32> = self
+            .dups
+            .iter()
+            .filter(|(slot, (t, _))| {
+                is_live(t)
+                    && self.configs.iter().find(|g| g.slots.contains(slot)).is_some_and(|g| {
+                        let pos = g.slots.iter().position(|s| s == *slot).unwrap_or(0);
+                        pos >= self.live_idx(g.id, is_live).len()
+                    })
+            })
+            .map(|(s, _)| *s)
+            .collect();
+        self.dups.retain(|s, _| keep.contains(s));
+        self.dups.len() != before
     }
 
     fn live_sig(&self, gid: u32, is_live: &dyn Fn(&str) -> bool) -> Vec<String> {
@@ -886,5 +936,33 @@ mod tests {
         assert!(!g.move_member(1, "b", 1, no_b)); // un assente non si sposta
         assert!(g.move_member(1, "c", 1, ALL));
         assert_eq!(order(&g), vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn duplicato_su_un_uscita_libera_del_gruppo() {
+        let mut g = grp(&[1, 2, 3, 4]);
+        g.place(1, 1, "a", "Anna", ALL);
+        g.place(1, 2, "b", "Bruno", ALL);
+        assert!(!g.set_dup(2, "a", "Anna", ALL)); // occupata da Bruno: niente duplicato
+        assert!(g.set_dup(4, "a", "Anna", ALL)); // libera, anche non consecutiva
+        assert_eq!(g.fill(ALL), vec![(1, Some("a".into())), (2, Some("b".into())), (3, None), (4, Some("a".into()))]);
+        assert_eq!(g.count(1, ALL), 3); // le azioni OBS contano le uscite che mostrano qualcuno
+        assert_eq!(order(&g), vec!["a", "b"]); // l'ordine del gruppo non cambia
+        assert!(g.clear_dup(4));
+        assert_eq!(g.count(1, ALL), 2);
+    }
+
+    #[test]
+    fn duplicato_sparisce_quando_arriva_un_membro_o_la_persona_esce() {
+        let mut g = grp(&[1, 2, 3]);
+        g.place(1, 1, "a", "Anna", ALL);
+        assert!(g.set_dup(2, "a", "Anna", ALL));
+        g.place(1, 2, "c", "Carla", ALL); // Carla entra nel gruppo: prende il posto 2
+        assert!(g.expire_dups(ALL));
+        assert_eq!(g.fill(ALL)[1], (2, Some("c".into())));
+        assert!(g.set_dup(3, "a", "Anna", ALL));
+        let no_a: &dyn Fn(&str) -> bool = &|t| t != "a";
+        assert!(g.expire_dups(no_a)); // Anna esce di scena
+        assert!(g.dup_slots().is_empty());
     }
 }
