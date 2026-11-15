@@ -98,8 +98,14 @@ fn get_state(hub: State<SharedHub>) -> Value {
 }
 
 #[tauri::command]
-fn assign(hub: State<SharedHub>, slot: u32, assign: SlotAssign) {
-    hub.lock().unwrap().assign(slot, assign);
+fn assign(hub: State<SharedHub>, slot: u32, assign: SlotAssign, fill: Option<bool>) -> Value {
+    // dalla Regia: chiede la prova di riempimento; fill = true quando confermata
+    hub.lock().unwrap().assign(slot, assign, if fill == Some(true) { "fill" } else { "ask" })
+}
+
+#[tauri::command]
+fn group_end_fill(hub: State<SharedHub>, id: u32) {
+    hub.lock().unwrap().group_end_fill(id);
 }
 
 #[tauri::command]
@@ -128,8 +134,28 @@ fn output_add(hub: State<SharedHub>, name: Option<String>) -> u32 {
 }
 
 #[tauri::command]
-fn output_update(hub: State<SharedHub>, id: u32, name: Option<String>, bg: Option<String>) -> Result<(), String> {
-    hub.lock().unwrap().output_update(id, name, bg)
+fn output_update(hub: State<SharedHub>, id: u32, name: Option<String>, bg: Option<String>, lt: Option<bool>) -> Result<(), String> {
+    hub.lock().unwrap().output_update(id, name, bg, lt)
+}
+
+#[tauri::command]
+fn output_stats(hub: State<SharedHub>, slot: u32) -> Value {
+    hub.lock().unwrap().output_stats(slot)
+}
+
+#[tauri::command]
+fn swap_outputs(hub: State<SharedHub>, a: u32, b: u32) {
+    hub.lock().unwrap().swap_outputs(a, b);
+}
+
+#[tauri::command]
+fn group_move(hub: State<SharedHub>, id: u32, track: String, delta: i32) {
+    hub.lock().unwrap().group_move(id, &track, delta);
+}
+
+#[tauri::command]
+fn set_lower_third(hub: State<SharedHub>, label: String, name: Option<String>, title: String) {
+    hub.lock().unwrap().set_lower_third(&label, name, title);
 }
 
 #[tauri::command]
@@ -184,14 +210,21 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             pub_ready, pub_tracks, pub_signal, pub_thumbs, pub_fullres, set_full_res,
             get_state, assign, set_settings, set_thumbs, studio_action,
-            group_save, group_delete, group_remove, set_obs,
-            output_add, output_update, output_move, output_delete
+            group_save, group_delete, group_remove, set_obs, group_end_fill,
+            output_add, output_update, output_move, output_delete,
+            output_stats, swap_outputs, group_move, set_lower_third
         ])
         .setup(move |app| {
             {
                 let mut h = hub.lock().unwrap();
                 h.app = Some(app.handle().clone());
-                h.load(app.path().app_config_dir()?.join("config.json"));
+                // OBSYARD_CONFIG_DIR: cartella di configurazione separata (test e sviluppo),
+                // così non si tocca quella dell'app installata
+                let dir = match std::env::var("OBSYARD_CONFIG_DIR") {
+                    Ok(d) if !d.is_empty() => std::path::PathBuf::from(d),
+                    _ => app.path().app_config_dir()?,
+                };
+                h.load(dir.join("config.json"));
             }
             let platform = hub.lock().unwrap().settings.platform.clone();
             let listener = server::bind(PORT)
@@ -203,6 +236,9 @@ pub fn run() {
                 .title("OBSYard – Regia")
                 .inner_size(1100.0, 760.0)
                 .min_inner_size(760.0, 480.0)
+                // senza il gestore di Tauri per i file trascinati, altrimenti su Windows il
+                // drag and drop HTML5 della Regia (sorgente → uscita) non funziona
+                .disable_drag_drop_handler()
                 .additional_browser_args(&args)
                 .build()?;
 

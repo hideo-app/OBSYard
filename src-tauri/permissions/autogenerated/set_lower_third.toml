@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-lower-third"
+description = "Enables the set_lower_third command without any pre-configured scope."
+commands.allow = ["set_lower_third"]
+
+[[permission]]
+identifier = "deny-set-lower-third"
+description = "Denies the set_lower_third command without any pre-configured scope."
+commands.deny = ["set_lower_third"]

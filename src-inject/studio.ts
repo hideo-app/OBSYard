@@ -120,13 +120,19 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   /** tracce terminate: servono per ri-agganciare automaticamente lo stesso ospite se riconnette */
   const ended = new Map<string, { kind: string; origin: TrackOrigin; label: string }>();
   let slots: Record<string, SlotAssign> = {};
-  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, platform: "streamyard", emptyBg: "transparent", priority: [] };
+  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, platform: "streamyard", emptyBg: "transparent", priority: [], lowerThirds: "off" };
   let outputs: Output[] = [];
   let thumbsOn = true;
   const counters: Record<TrackOrigin, number> = { remote: 0, camera: 0, screen: 0 };
 
   // -------------------------------------------------------- pubblicazione
   let publishTimer = 0;
+  /** schermo condiviso (nostro o di un ospite), non una webcam */
+  const isScreen = (e: Entry) => {
+    if (e.origin === "screen") return true;
+    const s = syInfo(e);
+    return !!s && s.kind !== "webcam";
+  };
   const publishTracks = () => {
     if (publishTimer) return;
     publishTimer = window.setTimeout(() => {
@@ -137,7 +143,10 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
         .map(([id, e]) => ({
           id,
           kind: e.track.kind as "video" | "audio",
-          origin: e.origin,
+          // gli schermi condivisi dagli ospiti arrivano come tracce remote: StreamYard ci dice che
+          // sono "screen" (o altro che non è una webcam) -> li pubblichiamo come schermo, così
+          // l'aggiunta automatica non li considera e si assegnano sempre a mano
+          origin: isScreen(e) ? "screen" : e.origin,
           label: labelOf(e),
           streamIds: e.syStream ? [e.syStream] : e.streamIds,
           muted: e.track.muted,

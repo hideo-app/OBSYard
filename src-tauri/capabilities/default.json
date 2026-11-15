@@ -3,5 +3,5 @@
   "identifier": "control",
   "description": "Finestra di controllo locale",
   "windows": ["control"],
-  "permissions": ["core:default", "allow-get-state", "allow-assign", "allow-set-settings", "allow-set-thumbs", "allow-studio-action", "allow-group-save", "allow-group-delete", "allow-group-remove", "allow-set-obs", "allow-output-add", "allow-output-update", "allow-output-move", "allow-output-delete", "allow-set-full-res"]
+  "permissions": ["core:default", "allow-get-state", "allow-assign", "allow-set-settings", "allow-set-thumbs", "allow-studio-action", "allow-group-save", "allow-group-delete", "allow-group-remove", "allow-set-obs", "allow-output-add", "allow-output-update", "allow-output-move", "allow-output-delete", "allow-set-full-res", "allow-group-end-fill", "allow-output-stats", "allow-swap-outputs", "allow-group-move", "allow-set-lower-third"]
 }
