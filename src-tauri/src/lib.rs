@@ -154,6 +154,11 @@ fn group_move(hub: State<SharedHub>, id: u32, track: String, delta: i32) {
 }
 
 #[tauri::command]
+fn apply_priority(hub: State<SharedHub>) {
+    hub.lock().unwrap().apply_priority();
+}
+
+#[tauri::command]
 fn set_lower_third(hub: State<SharedHub>, label: String, name: Option<String>, title: String) {
     hub.lock().unwrap().set_lower_third(&label, name, title);
 }
@@ -212,7 +217,7 @@ pub fn run() {
             get_state, assign, set_settings, set_thumbs, studio_action,
             group_save, group_delete, group_remove, set_obs, group_end_fill,
             output_add, output_update, output_move, output_delete,
-            output_stats, swap_outputs, group_move, set_lower_third
+            output_stats, swap_outputs, group_move, set_lower_third, apply_priority
         ])
         .setup(move |app| {
             {
@@ -243,7 +248,7 @@ pub fn run() {
                 .build()?;
 
             WebviewWindowBuilder::new(app, "studio", WebviewUrl::External(studio_url(&platform).parse()?))
-                .title("OBSYard – StreamYard")
+                .title(hub::platform_title(&platform))
                 .inner_size(1440.0, 900.0)
                 .initialization_script(STUDIO_JS)
                 .additional_browser_args(&args)

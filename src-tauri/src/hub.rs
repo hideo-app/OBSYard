@@ -112,6 +112,14 @@ fn default_platform() -> String {
     "streamyard".into()
 }
 
+/// titolo della finestra studio per la piattaforma scelta
+pub fn platform_title(platform: &str) -> &'static str {
+    match platform {
+        "discord" => "OBSYard – Discord",
+        _ => "OBSYard – StreamYard",
+    }
+}
+
 /// pagina da aprire nella finestra studio per la piattaforma scelta
 pub fn platform_url(platform: &str) -> &'static str {
     match platform {
@@ -784,6 +792,7 @@ let p = Persisted {
                 if let Ok(u) = platform_url(&s.platform).parse() {
                     let _ = w.navigate(u);
                 }
+                let _ = w.set_title(platform_title(&s.platform));
             }
             self.full_res = false;
         }
@@ -804,6 +813,16 @@ let p = Persisted {
         }
         self.persist();
         self.to_studio(json!({"type": "settings", "settings": self.settings}));
+        self.emit_state();
+    }
+
+    /// "Riordina ora": rimette i membri dei gruppi nell'ordine della precedenza, anche dopo
+    /// spostamenti a mano (che di norma la precedenza non annulla).
+    pub fn apply_priority(&mut self) {
+        self.groups.sort_by_priority(&self.settings.priority);
+        if self.apply_groups() {
+            self.push_slots();
+        }
         self.emit_state();
     }
 

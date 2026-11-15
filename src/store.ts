@@ -144,6 +144,8 @@ export const sendTo = (slot: number | string, track: string) =>
 /** trascinare un'uscita su un'altra: scambio (o invio della sorgente se i gruppi sono diversi) */
 export const swapOutputs = (a: number, b: number) => invoke("swap_outputs", { a, b });
 export const groupMove = (id: number, track: string, delta: -1 | 1) => invoke("group_move", { id, track, delta });
+/** rimette i membri dei gruppi nell'ordine della precedenza (anche dopo spostamenti a mano) */
+export const applyPriority = () => invoke("apply_priority");
 export const setLowerThird = (label: string, name: string | null, title: string) => invoke("set_lower_third", { label, name, title });
 
 export interface OutputStats {

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
   state, init, videoTracks, audioTracks, slotLayout, setSettings, setObs, studio, addOutput, nextOutputName, setFullRes,
-  selected, outputsOnScreen, sendTo, trackById, outputName, drag,
+  selected, outputsOnScreen, sendTo, trackById, outputName, drag, applyPriority,
   type Settings, type GroupView, type ObsConfig, type TrackInfo,
 } from "./store";
 import { obs, startObs, obsWanted, createLtInputs } from "./obs";
@@ -70,6 +70,11 @@ watch(() => state.settings.priority, (p) => {
   if (p.join(NL) !== parseNames(priorityText.value).join(NL)) priorityText.value = p.join(NL);
 });
 const savePriority = () => setSettings({ ...state.settings, priority: parseNames(priorityText.value) });
+/** salva l'elenco (se cambiato) e riordina comunque i gruppi, anche dopo spostamenti a mano */
+const reorderNow = async () => {
+  await savePriority();
+  await applyPriority();
+};
 
 const fullResInfo = (): { cls: string; text: string; title?: string } | null => {
   const s = state.fullRes.status;
@@ -279,9 +284,15 @@ const ltModeLabel = computed(() => ({ off: "spenti", page: "sull'uscita", obs: "
         <label class="field prio">Precedenza <small>(un nome per riga, il primo è il più importante)</small>
           <textarea v-model="priorityText" rows="4" placeholder="Mario Rossi&#10;Giulia" @blur="savePriority" />
         </label>
+        <button
+          type="button" class="mini-btn" :disabled="!parseNames(priorityText).length || !state.groups.length"
+          title="Rimette i membri dei gruppi nell'ordine della precedenza, annullando gli spostamenti fatti a mano"
+          @click="reorderNow"
+        >Riordina ora</button>
         <p class="hint">
           Chi è in elenco entra davanti a chi ha meno precedenza, e se le uscite sono piene l'ultimo va in attesa.
-          "Mario" vale anche per "Mario Rossi". Gli spostamenti a mano restano; chi togli a mano non viene riaggiunto.
+          "Mario" vale anche per "Mario Rossi". Cambiando l'elenco i gruppi si riordinano una volta; dopo, gli spostamenti a mano restano
+          finché non premi <em>Riordina ora</em>. Chi togli a mano non viene riaggiunto.
         </p>
       </details>
 

@@ -180,7 +180,7 @@ They are set in the control room's **Participants** section and apply to the who
   - Whoever is on the list joins the group ahead of those with less priority or not on the list. If the outputs are full, the last one goes on standby.
   - It also applies when a guest's name arrives a moment after their track.
   - "Mario" also matches "Mario Rossi"; case and spaces do not matter.
-  - When you edit the list, members are reordered once. Moves you make by hand afterwards stay.
+  - When you edit the list, members are reordered once. Moves you make by hand afterwards stay, until you press **Reorder now** under the list: it puts every group back in priority order.
 
 ### OBS actions per number of participants
 
