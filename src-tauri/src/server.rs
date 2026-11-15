@@ -31,6 +31,17 @@ pub async fn serve(hub: SharedHub, std_listener: std::net::TcpListener) {
         .route("/viewer.js", get(viewer_js))
         .route("/ws", get(ws))
         .route("/test", get(|| async { Html(TEST_HTML) }))
+        // solo per la pagina di test: WebSocket che rimanda indietro i messaggi, così la pagina
+        // può simulare il protocollo di StreamYard (lo script dello studio li vede come "in arrivo")
+        .route("/test/echo", get(|ws: WebSocketUpgrade| async move {
+            ws.on_upgrade(|mut socket: WebSocket| async move {
+                while let Some(Ok(Message::Text(t))) = socket.recv().await {
+                    if socket.send(Message::Text(t)).await.is_err() {
+                        break;
+                    }
+                }
+            })
+        }))
         .route("/api/state", get(api_state))
         .route("/api/assign", get(api_assign))
         .route("/api/log", axum::routing::post(|body: String| async move { eprintln!("[studio] {body}"); }))
@@ -122,7 +133,7 @@ async fn api_assign(Query(q): Query<AssignQuery>, State(hub): State<SharedHub>) 
             None => return (StatusCode::NOT_FOUND, "traccia audio non trovata").into_response(),
         },
     };
-    h.assign(q.slot, crate::hub::SlotAssign { video, audio });
+    h.assign(q.slot, crate::hub::SlotAssign { video, audio }, "queue"); // API: nessuna domanda
     axum::Json(h.snapshot()).into_response()
 }
 

@@ -87,6 +87,8 @@ It also changes StreamYard's broadcast layout: it makes sense if you direct the 
 
 `OBSYARD_CDP_PORT=9222` opens WebView2's remote debugging. `OBSYARD_URL=…` opens another page in the studio, for example `http://127.0.0.1:7878/test`.
 
+For testing and development use `OBSYARD_CONFIG_DIR=<folder>`: the configuration goes there instead of `%APPDATA%\it.obsyard.app`. That way you do not touch the installed app's, which uses the same folder in the development build too.
+
 In the studio, `localStorage.obsyardTap = "1"` records StreamYard's WebSocket messages and HTTP requests in `window.__obsyardTap`, useful if StreamYard changes protocol.
 
 ## Output groups
@@ -97,10 +99,21 @@ They work like guestroom.live's camera groups. A group is an ordered list of slo
 - **Use** it by sending guests to its outputs (buttons on the card, the output's menu, API):
   - a member already in the group **swaps** with whoever is on that slot;
   - a newcomer is **inserted** there: the others move down and whoever ends up past the last slot goes on **standby**, still a member;
-  - an empty slot past the people present queues the guest, because the group leaves no gaps;
+  - the first free output takes the guest at once. A free output **further on** asks first, as in guestroom, because the group leaves no gaps. You can cancel, or **fill up to there** with that person (fill test, below). From the API, with no question, the guest is queued;
   - emptying a slot of the group removes whoever was on it from the group.
 - Only connected guests count. If someone leaves, the others **move up at once, on air too**. Whoever comes back with the same name takes their place again. Under the slots a line shows who is *on standby* and who is *away*, with a × to remove them from the group.
 - When a group is deleted, its slots keep what they show.
+
+### Fill test (same person on several outputs)
+
+It works like guestroom's "test fill", to try on your own scenes meant for several people.
+
+- Sending someone to a group output past the first free one, the control room asks whether to **fill up to there**. Confirming, that person goes on that output and on every free output before it. People already on air stay where they are.
+- During the test, outputs past the people on air take **anyone** you send, without asking: the same person on several outputs, or different people in non-consecutive places.
+- OBS actions count every filled output.
+- Under the group a **yellow notice** says who is there and up to where, with a × to end the test. The test's outputs carry the *test* tag.
+- The test also ends when you empty one of its outputs or when the group's members change.
+- Outside groups the same source can already go on as many outputs as you like.
 
 ### Auto-add and priority
 

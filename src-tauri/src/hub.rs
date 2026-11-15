@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::groups::{GroupConfig, Groups};
+use crate::groups::{GroupConfig, Groups, Placed};
 use std::path::PathBuf;
 
 pub type SharedHub = Arc<Mutex<Hub>>;
@@ -99,6 +99,8 @@ impl Default for ObsConfig {
 struct Persisted {
     settings: Settings,
     outputs: Vec<Output>,
+    /// ultimo id di uscita assegnato: gli id non vengono mai riusati
+    last_output_id: u32,
     groups: Vec<GroupConfig>,
     obs: ObsConfig,
 }
@@ -114,6 +116,9 @@ pub struct Hub {
     pub viewers: HashMap<u64, Viewer>,
     next_id: u64,
     pub outputs: Vec<Output>,
+    /// ultimo id di uscita assegnato (mai riusato: un'uscita eliminata non "rinasce"
+    /// né in un gruppo né in una fonte OBS che punta ancora al suo URL)
+    last_output_id: u32,
     pub slots: BTreeMap<u32, SlotAssign>,
     pub tracks: Value,
     pub settings: Settings,
@@ -135,6 +140,7 @@ impl Hub {
             viewers: HashMap::new(),
             next_id: 1,
             outputs: default_outputs(),
+            last_output_id: 4,
             slots: (1..=4).map(|i| (i, SlotAssign::default())).collect(),
             tracks: json!([]),
             settings: Settings::default(),
@@ -159,12 +165,21 @@ impl Hub {
                     }
                     self.groups = Groups::from_configs(p.groups);
                     self.obs = p.obs;
+                    self.last_output_id = p.last_output_id;
                 }
                 Err(e) => eprintln!("[obsyard] config non valida, ignorata: {e}"),
             }
         }
+        // gruppi salvati con uscite che non esistono più (es. config della versione a 8 slot
+        // fissi): via quelle uscite, altrimenti una nuova uscita con lo stesso id ci finirebbe dentro
+        let ids: Vec<u32> = self.outputs.iter().map(|o| o.id).collect();
+        let stale = self.groups.drop_missing_slots(&ids);
+        self.last_output_id = crate::groups::highest_id(self.last_output_id, &ids, &stale);
         self.sync_slots();
         self.config_path = Some(path);
+        if !stale.is_empty() {
+            self.persist();
+        }
     }
 
     /// una SlotAssign per ogni uscita, nessuna in più
@@ -186,7 +201,9 @@ impl Hub {
 
     // ---------- uscite (dinamiche, come guestroom) ----------
     pub fn output_add(&mut self, name: Option<String>) -> u32 {
-        let id = self.outputs.iter().map(|o| o.id).max().unwrap_or(0) + 1;
+        let ids: Vec<u32> = self.outputs.iter().map(|o| o.id).collect();
+        let id = crate::groups::highest_id(self.last_output_id, &ids, &[]) + 1;
+        self.last_output_id = id;
         // prossimo "Cam N"
         let n = self
             .outputs
@@ -257,6 +274,7 @@ impl Hub {
 let p = Persisted {
             settings: self.settings.clone(),
             outputs: self.outputs.clone(),
+            last_output_id: self.last_output_id,
             groups: self.groups.configs.clone(),
             obs: self.obs.clone(),
         };
@@ -315,6 +333,8 @@ let p = Persisted {
             }
         }
         let is_live = |t: &str| live.iter().any(|(id, _)| id == t);
+        // la prova di riempimento finisce quando cambiano i membri connessi
+        self.groups.expire_fills(&is_live);
         let mut changed = false;
         for (slot, track) in self.groups.fill(&is_live) {
             let a = SlotAssign { video: track, audio: Some("auto".into()) };
@@ -491,14 +511,24 @@ let p = Persisted {
 
     /// Assegna uno slot. Se lo slot è di un gruppo, passa dal gruppo:
     /// mandarci qualcuno = scambio/inserimento, svuotarlo = toglierlo dal gruppo.
-    pub fn assign(&mut self, slot: u32, a: SlotAssign) {
+    /// `mode`: "ask" (Regia: un'uscita del gruppo oltre la prima libera chiede la prova di
+    /// riempimento), "fill" (confermato: avvia la prova), "queue" (API: nessuna domanda, in coda).
+    /// Ritorna null, oppure {"ask": {...}} con quello che serve per la domanda.
+    pub fn assign(&mut self, slot: u32, a: SlotAssign, mode: &str) -> Value {
         if let Some(gid) = self.groups.group_of_slot(slot) {
             let live = self.live_video();
             let is_live = |t: &str| live.iter().any(|(id, _)| id == t);
             match &a.video {
                 Some(track) => {
                     let label = live.iter().find(|(id, _)| id == track).map(|(_, l)| l.clone()).unwrap_or_default();
-                    self.groups.place(gid, slot, track, &label, &is_live);
+                    if mode == "queue" {
+                        self.groups.place(gid, slot, track, &label, &is_live);
+                    } else if let Placed::AskFill { landed } =
+                        self.groups.place_or_fill(gid, slot, track, &label, mode == "fill", &is_live)
+                    {
+                        let group = self.groups.configs.iter().find(|g| g.id == gid).map(|g| g.name.clone());
+                        return json!({ "ask": { "group": group, "name": label, "chosen": slot, "landed": landed } });
+                    }
                 }
                 None => self.groups.clear_slot(gid, slot, &is_live),
             }
@@ -508,6 +538,16 @@ let p = Persisted {
         }
         self.push_slots();
         self.emit_state();
+        Value::Null
+    }
+
+    /// × sotto il gruppo: termina la prova di riempimento.
+    pub fn group_end_fill(&mut self, gid: u32) {
+        if self.groups.end_fill(gid) {
+            self.apply_groups();
+            self.push_slots();
+            self.emit_state();
+        }
     }
 
     pub fn set_settings(&mut self, mut s: Settings) {
@@ -536,3 +576,4 @@ let p = Persisted {
         self.to_studio(json!({"type": "thumbs", "on": on}));
     }
 }
+

@@ -98,8 +98,14 @@ fn get_state(hub: State<SharedHub>) -> Value {
 }
 
 #[tauri::command]
-fn assign(hub: State<SharedHub>, slot: u32, assign: SlotAssign) {
-    hub.lock().unwrap().assign(slot, assign);
+fn assign(hub: State<SharedHub>, slot: u32, assign: SlotAssign, fill: Option<bool>) -> Value {
+    // dalla Regia: chiede la prova di riempimento; fill = true quando confermata
+    hub.lock().unwrap().assign(slot, assign, if fill == Some(true) { "fill" } else { "ask" })
+}
+
+#[tauri::command]
+fn group_end_fill(hub: State<SharedHub>, id: u32) {
+    hub.lock().unwrap().group_end_fill(id);
 }
 
 #[tauri::command]
@@ -184,14 +190,20 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             pub_ready, pub_tracks, pub_signal, pub_thumbs, pub_fullres, set_full_res,
             get_state, assign, set_settings, set_thumbs, studio_action,
-            group_save, group_delete, group_remove, set_obs,
+            group_save, group_delete, group_remove, set_obs, group_end_fill,
             output_add, output_update, output_move, output_delete
         ])
         .setup(move |app| {
             {
                 let mut h = hub.lock().unwrap();
                 h.app = Some(app.handle().clone());
-                h.load(app.path().app_config_dir()?.join("config.json"));
+                // OBSYARD_CONFIG_DIR: cartella di configurazione separata (test e sviluppo),
+                // così non si tocca quella dell'app installata
+                let dir = match std::env::var("OBSYARD_CONFIG_DIR") {
+                    Ok(d) if !d.is_empty() => std::path::PathBuf::from(d),
+                    _ => app.path().app_config_dir()?,
+                };
+                h.load(dir.join("config.json"));
             }
             let listener = server::bind(PORT)
                 .map_err(|e| format!("porta 127.0.0.1:{PORT} occupata ({e}): OBSYard è già aperto?"))?;

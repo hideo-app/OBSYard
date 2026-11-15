@@ -39,7 +39,18 @@ function source(name, color, freq) {
   return stream;
 }
 
-async function guest(name, color, freq) {
+// Protocollo StreamYard simulato: i messaggi passano da un WebSocket "eco" del server locale,
+// così lo script dello studio li riceve come messaggi in arrivo (streamUpdated, clientUpdated, offer).
+const echo = new WebSocket(`ws://${location.host}/test/echo`);
+const echoOpen = new Promise((r) => (echo.onopen = r));
+const sy = async (command, body) => {
+  await echoOpen;
+  echo.send(JSON.stringify({ message: { command, body }, type: "message" }));
+  await new Promise((r) => setTimeout(r, 50)); // il messaggio torna indietro prima di proseguire
+};
+window.sy = sy; // per i test: es. sy("streamUpdated", {...privacy: "moderators"})
+
+async function guest(name, color, freq, kind = "webcam") {
   const tile = document.createElement("div");
   tile.className = "tile";
   tile.innerHTML = `<video autoplay muted playsinline></video><div class="name">${name}</div>`;
@@ -52,12 +63,19 @@ async function guest(name, color, freq) {
   src.getTracks().forEach(t => a.addTrack(t, src));
   (window.senders ??= {})[name] = a; // per i test: spegnere la "camera" di un ospite
   await a.setLocalDescription(await a.createOffer());
+  // come StreamYard: nome del client, stato dello stream e offerta col suo streamId
+  const streamId = "s-" + name.replace(/\W/g, ""), clientId = "c-" + name.split(" ")[0];
+  await sy("clientUpdated", { clientId, displayName: name.split(" (")[0] });
+  await sy("streamUpdated", { streamId, clientId, kind, privacy: "public", hasVideo: true });
+  await sy("offer", { connectionId: "conn-" + streamId, streamId, jsep: { type: "offer", sdp: a.localDescription.sdp } });
   await b.setRemoteDescription(a.localDescription);
   await b.setLocalDescription(await b.createAnswer());
   await a.setRemoteDescription(b.localDescription);
 }
 
 guests.forEach(([n, c], i) => guest(n, c, 330 + i * 110));
+// un ospite che condivide lo schermo (stesso client di Giulia): va assegnato a mano
+guest("Giulia Bianchi (schermo)", "#3a3f4b", 550, "screen");
 
 // Finti pulsanti layout come quelli di StreamYard (aria-pressed), per provare "Ospiti a piena risoluzione".
 // ?layout=0 li toglie per provare il caso "layout non trovato".

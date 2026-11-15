@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-group-end-fill"
+description = "Enables the group_end_fill command without any pre-configured scope."
+commands.allow = ["group_end_fill"]
+
+[[permission]]
+identifier = "deny-group-end-fill"
+description = "Denies the group_end_fill command without any pre-configured scope."
+commands.deny = ["group_end_fill"]

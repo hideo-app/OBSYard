@@ -86,7 +86,27 @@ export async function init() {
   syncThumbs();
 }
 
-export const assign = (slot: number | string, a: SlotAssign) => invoke("assign", { slot: Number(slot), assign: a });
+/**
+ * Manda una sorgente su un'uscita. Su un'uscita di gruppo oltre la prima libera OBSYard chiede
+ * (come guestroom) se avviare la prova di riempimento: la persona va lì e sulle uscite libere prima.
+ */
+export const assign = async (slot: number | string, a: SlotAssign) => {
+  const r = await invoke<{ ask?: { group: string; name: string; chosen: number; landed: number } } | null>("assign", {
+    slot: Number(slot),
+    assign: a,
+  });
+  if (!r?.ask) return;
+  const { group, name, chosen, landed } = r.ask;
+  const who = name || "questa sorgente";
+  const ok = confirm(
+    `${outputName(chosen)} è oltre le persone in ${group}: il gruppo riempie le uscite in ordine, quindi ${who} andrebbe su ${outputName(landed)}.\n\n` +
+      `Riempire comunque tutte le uscite fino a ${outputName(chosen)} con ${who}? Utile per provare da solo le scene con più persone.\n\n` +
+      `OK = riempi fino a ${outputName(chosen)} (prova) · Annulla = lascia com'è`,
+  );
+  if (ok) await invoke("assign", { slot: Number(slot), assign: a, fill: true });
+};
+
+export const endFill = (id: number) => invoke("group_end_fill", { id });
 
 export const setSettings = (s: Settings) => invoke("set_settings", { settings: s });
 

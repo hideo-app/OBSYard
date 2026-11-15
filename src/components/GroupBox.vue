@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { removeFromGroup, state, firstGroupId, type GroupView } from "../store";
+import { removeFromGroup, state, firstGroupId, endFill, outputName, type GroupView } from "../store";
 import { obs } from "../obs";
 import SlotRow from "./SlotRow.vue";
 
@@ -36,6 +36,10 @@ const status = computed(() => {
 
     <SlotRow v-for="(n, i) in group.slots" :key="n" :slot="n" :fill-index="i + 1" />
 
+    <p v-if="group.testFill && group.testFill.slots.length" class="gfill" role="status">
+      ⚠ Prova: {{ group.testFill.names.join(", ") }} sulle uscite fino a {{ outputName(group.testFill.slots[group.testFill.slots.length - 1]) }}
+      <button class="x" :title="`Termina la prova di ${group.name}`" @click="endFill(group.id)">×</button>
+    </p>
     <p v-if="standby.length || away.length" class="goff" aria-label="Membri non sugli slot">
       <template v-if="standby.length">
         In attesa:

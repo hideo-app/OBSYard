@@ -4,7 +4,7 @@ fn main() {
     let commands = &[
         "pub_ready", "pub_tracks", "pub_signal", "pub_thumbs", "pub_fullres", "set_full_res",
         "get_state", "assign", "set_settings", "set_thumbs", "studio_action",
-        "group_save", "group_delete", "group_remove", "set_obs",
+        "group_save", "group_delete", "group_remove", "set_obs", "group_end_fill",
         "output_add", "output_update", "output_move", "output_delete",
     ];
     tauri_build::try_build(

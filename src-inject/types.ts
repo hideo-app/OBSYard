@@ -71,6 +71,8 @@ export interface GroupView extends GroupConfig {
   members: GroupMember[];
   /** partecipanti che contano per le azioni OBS (0..slots.length) */
   count: number;
+  /** prova di riempimento in corso: uscite riempite oltre le persone in onda e chi c'è */
+  testFill: { slots: number[]; names: string[] } | null;
 }
 
 export interface ObsConfig {

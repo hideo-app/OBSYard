@@ -12,6 +12,8 @@ const a = computed(() => state.slots[props.slot] ?? { video: null, audio: "auto"
 const video = computed(() => trackById(a.value.video));
 const viewers = computed(() => state.viewers[props.slot] ?? 0);
 const inGroup = computed(() => props.fillIndex != null);
+/** uscita riempita dalla prova di riempimento del gruppo */
+const inTest = computed(() => !!groupOfSlot(props.slot)?.testFill?.slots.includes(Number(props.slot)));
 const copied = ref(false);
 
 const setVideo = (e: Event) => {
@@ -82,6 +84,7 @@ const remove = () => {
           @keydown.enter.prevent="commitRename" @keydown.esc.prevent="renaming = false" @blur="commitRename"
         />
         <strong v-else :title="`/slot/${slot}`" @dblclick="startRename">{{ out?.name ?? `Slot ${slot}` }}</strong>
+        <span v-if="inTest" class="tag test" title="Prova di riempimento: termina svuotando questa uscita o con la × sotto il gruppo">prova</span>
         <span v-if="out?.bg" class="tag" title="Eccezione allo sfondo globale senza video">{{ out.bg === "black" ? "nero" : "trasparente" }}</span>
       </div>
       <select :value="a.video ?? ''" @change="setVideo">
