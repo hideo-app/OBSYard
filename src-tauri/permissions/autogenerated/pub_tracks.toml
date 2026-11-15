@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pub-tracks"
+description = "Enables the pub_tracks command without any pre-configured scope."
+commands.allow = ["pub_tracks"]
+
+[[permission]]
+identifier = "deny-pub-tracks"
+description = "Denies the pub_tracks command without any pre-configured scope."
+commands.deny = ["pub_tracks"]

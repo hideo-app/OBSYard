@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pub-ready"
+description = "Enables the pub_ready command without any pre-configured scope."
+commands.allow = ["pub_ready"]
+
+[[permission]]
+identifier = "deny-pub-ready"
+description = "Denies the pub_ready command without any pre-configured scope."
+commands.deny = ["pub_ready"]

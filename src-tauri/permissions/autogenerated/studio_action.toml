@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-studio-action"
+description = "Enables the studio_action command without any pre-configured scope."
+commands.allow = ["studio_action"]
+
+[[permission]]
+identifier = "deny-studio-action"
+description = "Denies the studio_action command without any pre-configured scope."
+commands.deny = ["studio_action"]

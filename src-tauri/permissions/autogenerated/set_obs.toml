@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-obs"
+description = "Enables the set_obs command without any pre-configured scope."
+commands.allow = ["set_obs"]
+
+[[permission]]
+identifier = "deny-set-obs"
+description = "Denies the set_obs command without any pre-configured scope."
+commands.deny = ["set_obs"]

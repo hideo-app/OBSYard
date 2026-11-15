@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>OBSYard – finto StreamYard (test)</title>
+<style>
+  body { margin: 0; font: 14px system-ui; background: #1b1d24; color: #eee; display: flex; gap: 12px; padding: 12px; flex-wrap: wrap; }
+  .tile { width: 480px; }
+  .tile video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
+  .name { padding: 4px 0; }
+</style>
+</head>
+<body>
+<script>
+// Simula due ospiti: ogni "ospite" è una coppia di RTCPeerConnection in loopback.
+// La PC ricevente è creata dalla pagina, quindi l'hook di OBSYard ne vede le tracce come "remote".
+const guests = [["Mario Rossi", "#e4572e"], ["Giulia Bianchi", "#17bebb"], ["Luca Ferri", "#7a5cfa"]];
+
+function source(name, color, freq) {
+  const c = Object.assign(document.createElement("canvas"), { width: 1280, height: 720 });
+  const g = c.getContext("2d");
+  let f = 0;
+  (function draw() {
+    f++;
+    g.fillStyle = color; g.fillRect(0, 0, 1280, 720);
+    g.fillStyle = "#fff"; g.font = "bold 90px system-ui"; g.fillText(name, 60, 200);
+    g.font = "60px monospace"; g.fillText("frame " + f, 60, 330);
+    g.fillText(new Date().toISOString().slice(11, 23), 60, 420);
+    g.fillRect((f * 12) % 1280, 560, 80, 80);
+    requestAnimationFrame(draw);
+  })();
+  const stream = c.captureStream(30);
+  const ac = new AudioContext();
+  const osc = ac.createOscillator(); osc.frequency.value = freq;
+  const gain = ac.createGain(); gain.gain.value = 0.05;
+  const dst = ac.createMediaStreamDestination();
+  osc.connect(gain).connect(dst); osc.start();
+  stream.addTrack(dst.stream.getAudioTracks()[0]);
+  return stream;
+}
+
+async function guest(name, color, freq) {
+  const tile = document.createElement("div");
+  tile.className = "tile";
+  tile.innerHTML = `<video autoplay muted playsinline></video><div class="name">${name}</div>`;
+  document.body.appendChild(tile);
+  const src = source(name, color, freq);
+  const a = new RTCPeerConnection(), b = new RTCPeerConnection();
+  a.onicecandidate = e => e.candidate && b.addIceCandidate(e.candidate);
+  b.onicecandidate = e => e.candidate && a.addIceCandidate(e.candidate);
+  b.ontrack = e => { tile.querySelector("video").srcObject = e.streams[0]; };
+  src.getTracks().forEach(t => a.addTrack(t, src));
+  await a.setLocalDescription(await a.createOffer());
+  await b.setRemoteDescription(a.localDescription);
+  await b.setLocalDescription(await b.createAnswer());
+  await a.setRemoteDescription(b.localDescription);
+}
+
+guests.forEach(([n, c], i) => guest(n, c, 330 + i * 110));
+</script>
+</body>
+</html>

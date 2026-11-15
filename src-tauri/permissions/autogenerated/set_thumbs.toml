@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-thumbs"
+description = "Enables the set_thumbs command without any pre-configured scope."
+commands.allow = ["set_thumbs"]
+
+[[permission]]
+identifier = "deny-set-thumbs"
+description = "Denies the set_thumbs command without any pre-configured scope."
+commands.deny = ["set_thumbs"]

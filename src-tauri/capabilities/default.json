@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "control",
+  "description": "Finestra di controllo locale",
+  "windows": ["control"],
+  "permissions": ["core:default", "allow-get-state", "allow-assign", "allow-set-settings", "allow-set-thumbs", "allow-studio-action", "allow-group-save", "allow-group-delete", "allow-group-remove", "allow-set-obs"]
+}

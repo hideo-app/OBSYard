@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pub-thumbs"
+description = "Enables the pub_thumbs command without any pre-configured scope."
+commands.allow = ["pub_thumbs"]
+
+[[permission]]
+identifier = "deny-pub-thumbs"
+description = "Denies the pub_thumbs command without any pre-configured scope."
+commands.deny = ["pub_thumbs"]
