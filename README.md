@@ -25,7 +25,7 @@ Performance choices:
 - **On the OBS side** `jitterBufferTarget = 0` / `playoutDelayHint = 0`: minimal latency.
 - **Switching the source of a slot = `replaceTrack()`**: no renegotiation, no hiccup in OBS.
 - WebView2 without background/occlusion throttling (the StreamYard window can stay minimized).
-- Thumbnails (192×108, every 2 s) only while the control room is visible.
+- Thumbnails (192×108) only while the control room is visible, at 0.5–15 fps (*Previews* menu at the top; one every 2 s by default).
 
 ## Usage
 

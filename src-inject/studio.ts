@@ -144,7 +144,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   /** tracce terminate: servono per ri-agganciare automaticamente lo stesso ospite se riconnette */
   const ended = new Map<string, { kind: string; origin: TrackOrigin; label: string }>();
   let slots: Record<string, SlotAssign> = {};
-  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, platform: "streamyard", emptyBg: "transparent", priority: [], lowerThirds: "off" };
+  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, platform: "streamyard", emptyBg: "transparent", priority: [], lowerThirds: "off", thumbFps: 0.5 };
   let outputs: Output[] = [];
   let thumbsOn = true;
   const counters: Record<TrackOrigin, number> = { remote: 0, camera: 0, screen: 0 };
@@ -487,6 +487,27 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   };
   if (IS_DISCORD) setInterval(dcResolve, 1000);
 
+  // ---------------------------------- Discord: qualità richiesta (op 15)
+  // Ogni client dice al server quanta qualità vuole per ogni video ("media sink wants", 0–100 per
+  // ssrc, più "any" per gli altri); il client ufficiale la abbassa quando un riquadro è piccolo, e
+  // chi invia adegua il suo encoder a quello che gli chiedono. Con "Piena risoluzione" riscriviamo
+  // la richiesta: 100 per tutti. Il tetto resta quello di chi invia (camera 720p, Go Live secondo
+  // le sue impostazioni e Nitro).
+  const origSend = window.WebSocket.prototype.send;
+  const dcWants = new Map<WebSocket, Record<string, number>>();
+  const dcBoost = (want: Record<string, number>) =>
+    Object.fromEntries(Object.entries(want).map(([k, v]) => [k, typeof v === "number" ? 100 : v]));
+  /** rimanda l'ultima richiesta di ogni connessione vocale, con o senza qualità massima */
+  const dcResendWants = () => {
+    for (const [ws, want] of dcWants) {
+      if (ws.readyState !== WebSocket.OPEN) {
+        dcWants.delete(ws);
+        continue;
+      }
+      origSend.call(ws, JSON.stringify({ op: 15, d: fullRes.on ? dcBoost(want) : want }));
+    }
+  };
+
   const OrigWS = window.WebSocket;
   W.WebSocket = new Proxy(OrigWS, {
     construct(target, args, newTarget) {
@@ -501,8 +522,16 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
       return ws;
     },
   });
-  const origSend = OrigWS.prototype.send;
   OrigWS.prototype.send = function (this: WebSocket, data: any) {
+    if (IS_DISCORD && typeof data === "string" && data.includes('"op":15') && /discord\.media/.test(this.url)) {
+      try {
+        const m = JSON.parse(data);
+        if (m?.op === 15 && m.d && typeof m.d === "object") {
+          dcWants.set(this, m.d);
+          if (fullRes.on) data = JSON.stringify({ ...m, d: dcBoost(m.d) });
+        }
+      } catch {}
+    }
     syMessage("out", data);
     // identificazione (op 0) sulla connessione vocale: il nostro id utente, e se è una connessione
     // Go Live. I messaggi in arrivo non dicono il tipo: lo dice solo la nostra richiesta
@@ -620,7 +649,10 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     return thumbCanvas.toDataURL("image/jpeg", 0.65);
   };
 
+  /** intervallo tra due giri di miniature, dagli fps scelti in Regia (0,5–15) */
+  const thumbEvery = () => 1000 / Math.min(15, Math.max(0.2, Number(settings.thumbFps) || 0.5));
   const thumbLoop = async () => {
+    const started = performance.now();
     if (thumbsOn) {
       const out: Record<string, string> = {};
       for (const [id, e] of tracks) {
@@ -630,7 +662,8 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
       }
       if (Object.keys(out).length) invoke("pub_thumbs", { thumbs: out }).catch(() => {});
     }
-    setTimeout(thumbLoop, 2000);
+    // il tempo speso a catturare conta: a fps alti si riparte subito, mai sotto 20 ms
+    setTimeout(thumbLoop, Math.max(20, thumbEvery() - (performance.now() - started)));
   };
 
   // ------------------------------------------------- risoluzione degli slot
@@ -852,6 +885,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   let layoutWrite = "";
   const needsReload = () => layoutWrite === "created" || layoutWrite === "updated";
   const reportFullRes = () => {
+    if (IS_DISCORD) return; // su Discord lo stato lo diamo subito, in recv
     if (fullRes.status === "busy") return;
     const target = findLayout(fullRes.layout);
     const status = !fullRes.on
@@ -1000,6 +1034,15 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
         thumbsOn = m.on;
         break;
       case "fullRes":
+        if (IS_DISCORD) {
+          if (m.on !== fullRes.on) {
+            fullRes.on = m.on;
+            dcResendWants();
+          }
+          fullRes.status = m.on ? "on" : "off";
+          invoke("pub_fullres", { status: fullRes.status }).catch(() => {});
+          break;
+        }
         if (m.on !== fullRes.on || m.layout !== fullRes.layout) {
           fullRes.on = m.on;
           fullRes.layout = m.layout;

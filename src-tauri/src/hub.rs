@@ -91,6 +91,9 @@ pub struct Settings {
     /// nome del layout personalizzato di StreamYard con tutti i riquadri a piena altezza
     #[serde(default = "default_full_res_layout")]
     pub full_res_layout: String,
+    /// fotogrammi al secondo delle anteprime nella Regia (0,5 = una ogni 2 s)
+    #[serde(default = "default_thumb_fps")]
+    pub thumb_fps: f64,
     /// chi va in onda entra da solo nel primo gruppo, in ordine di arrivo
     #[serde(default)]
     pub auto_add: bool,
@@ -106,6 +109,10 @@ pub struct Settings {
     /// sottopancia: "off", "page" (disegnati dalla pagina dell'uscita) o "obs" (fonti Testo di OBS)
     #[serde(default = "default_lower_thirds")]
     pub lower_thirds: String,
+}
+
+fn default_thumb_fps() -> f64 {
+    0.5
 }
 
 fn default_platform() -> String {
@@ -142,7 +149,7 @@ fn default_full_res_layout() -> String {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { codec: "H264".into(), max_bitrate_kbps: 12_000, max_fps: 60, full_res_layout: default_full_res_layout(), auto_add: false, platform: default_platform(), empty_bg: default_empty_bg(), priority: vec![], lower_thirds: default_lower_thirds() }
+        Self { codec: "H264".into(), max_bitrate_kbps: 12_000, max_fps: 60, full_res_layout: default_full_res_layout(), thumb_fps: default_thumb_fps(), auto_add: false, platform: default_platform(), empty_bg: default_empty_bg(), priority: vec![], lower_thirds: default_lower_thirds() }
     }
 }
 
@@ -786,6 +793,7 @@ let p = Persisted {
         if s.platform != "discord" {
             s.platform = "streamyard".into();
         }
+        s.thumb_fps = if s.thumb_fps.is_finite() { s.thumb_fps.clamp(0.2, 15.0) } else { default_thumb_fps() };
         if s.platform != self.settings.platform {
             // cambio piattaforma: la finestra studio apre l'altro sito; tracce e uscite si svuotano da sole
             if let Some(w) = self.app.as_ref().and_then(|a| a.get_webview_window("studio")) {

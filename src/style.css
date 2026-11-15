@@ -281,3 +281,5 @@ html { scrollbar-gutter: stable; }
 
 /* ---------- piattaforma ---------- */
 .platform { padding: 3px 8px; font-size: 13px; font-weight: 600; }
+.hsel { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.hsel select { padding: 3px 6px; font-size: 12px; }

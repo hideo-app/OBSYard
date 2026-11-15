@@ -26,6 +26,8 @@ export interface Settings {
   maxFps: number;
   /** layout personalizzato di StreamYard con tutti i riquadri a piena altezza */
   fullResLayout: string;
+  /** fotogrammi al secondo delle anteprime nella Regia (0,5 = una ogni 2 s) */
+  thumbFps: number;
   /** chi va in onda entra da solo nel primo gruppo, in ordine di arrivo */
   autoAdd: boolean;
   /** piattaforma aperta nella finestra studio */

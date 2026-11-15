@@ -59,6 +59,9 @@ const setPlatform = (e: Event) => {
   setSettings({ ...state.settings, platform });
 };
 const toggleDrive = () => setObs({ ...state.obs, drive: !state.obs.drive });
+/** fps delle anteprime nella Regia */
+const THUMB_FPS = [0.5, 1, 2, 5, 10, 15];
+const setThumbFps = (e: Event) => setSettings({ ...state.settings, thumbFps: Number((e.target as HTMLSelectElement).value) });
 
 // partecipanti: aggiunta automatica al primo gruppo + precedenza (un nome per riga)
 const toggleAutoAdd = () => setSettings({ ...state.settings, autoAdd: !state.settings.autoAdd });
@@ -78,6 +81,8 @@ const reorderNow = async () => {
 
 const fullResInfo = (): { cls: string; text: string; title?: string } | null => {
   const s = state.fullRes.status;
+  if (state.settings.platform === "discord")
+    return s === "on" ? { cls: "ok", text: "Qualità massima richiesta", title: "OBSYard chiede a Discord la qualità massima per ogni video. Il tetto resta quello di chi invia: camera 720p, Go Live secondo le sue impostazioni e Nitro" } : null;
   const name = state.fullRes.layout;
   if (s.startsWith("error:")) return { cls: "bad", text: "Layout non scritto", title: s.slice(6) };
   return (
@@ -179,13 +184,22 @@ const ltModeLabel = computed(() => ({ off: "spenti", page: "sull'uscita", obs: "
     </span>
     <span v-if="obsWanted()" class="pill" :class="obs.status === 'connected' ? 'ok' : 'wait'" :title="obs.error">{{ obsLabel() }}</span>
     <span v-if="onAir" class="pill air" title="Uscite in programma in OBS">ON AIR · {{ onAir }}</span>
-    <span v-if="state.settings.platform === 'streamyard' && fullResInfo()" class="pill" :class="fullResInfo()!.cls" :title="fullResInfo()!.title">{{ fullResInfo()!.text }}</span>
+    <span v-if="fullResInfo()" class="pill" :class="fullResInfo()!.cls" :title="fullResInfo()!.title">{{ fullResInfo()!.text }}</span>
     <div class="spacer" />
     <label class="switch" title="I gruppi cambiano scene ed elementi di OBS in base al numero di partecipanti">
       <input type="checkbox" :checked="state.obs.drive" @change="toggleDrive" /><span class="track" /> Pilota OBS
     </label>
+    <label v-if="state.settings.platform === 'discord'" class="switch" title="Chiede a Discord la qualità massima per ogni video, anche quando il suo riquadro è piccolo. Chi invia resta al suo massimo: camera 720p, Go Live secondo le sue impostazioni e Nitro.">
+      <input type="checkbox" :checked="state.fullRes.on" @change="setFullRes(!state.fullRes.on)" /><span class="track" /> Piena risoluzione
+    </label>
     <label v-if="state.settings.platform === 'streamyard'" class="switch" title="Passa al layout personalizzato con tutti i riquadri a piena altezza: gli ospiti inviano alla massima risoluzione. Cambia anche il layout della diretta di StreamYard.">
       <input type="checkbox" :checked="state.fullRes.on" @change="setFullRes(!state.fullRes.on)" /><span class="track" /> Piena risoluzione
+    </label>
+    <label class="hsel" title="Quante volte al secondo si aggiornano le anteprime delle sorgenti nella Regia. Più alto = più fluide, più lavoro per il computer">
+      Anteprime
+      <select :value="state.settings.thumbFps" @change="setThumbFps">
+        <option v-for="f in THUMB_FPS" :key="f" :value="f">{{ f < 1 ? `${f.toString().replace('.', ',')} fps` : `${f} fps` }}</option>
+      </select>
     </label>
     <span class="vsep" />
     <button @click="studio('show')">Mostra {{ platformName }}</button>
