@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import {
   state, init, videoTracks, audioTracks, slotLayout, setSettings, setObs, studio, addOutput, nextOutputName, setFullRes,
   type Settings, type GroupView, type ObsConfig,
@@ -43,6 +43,17 @@ const commitAdd = async () => {
   await addOutput(newName.value.trim() || undefined);
   adding.value = false;
 };
+const platformName = computed(() => (state.settings.platform === "discord" ? "Discord" : "StreamYard"));
+const setPlatform = (e: Event) => {
+  const select = e.target as HTMLSelectElement;
+  const platform = select.value as "streamyard" | "discord";
+  if (platform === state.settings.platform) return;
+  if (!confirm(`Aprire ${platform === "discord" ? "Discord" : "StreamYard"} nella finestra studio? Le sorgenti attuali spariranno.`)) {
+    select.value = state.settings.platform; // annullato: la tendina torna com'era
+    return;
+  }
+  setSettings({ ...state.settings, platform, autoAdd: state.settings.autoAdd });
+};
 const toggleDrive = () => setObs({ ...state.obs, drive: !state.obs.drive });
 
 // partecipanti: aggiunta automatica al primo gruppo + precedenza (un nome per riga)
@@ -80,19 +91,26 @@ const obsLabel = () =>
 <template>
   <header class="top">
     <div class="brand"><span class="dot" />OBSYard</div>
+    <select
+      class="platform" :value="state.settings.platform" title="Piattaforma da cui prendere le sorgenti"
+      @change="setPlatform($event)"
+    >
+      <option value="streamyard">StreamYard</option>
+      <option value="discord">Discord</option>
+    </select>
     <span class="pill" :class="state.publisherReady ? 'ok' : 'wait'">
-      {{ state.publisherReady ? "StreamYard collegato" : "In attesa di StreamYard…" }}
+      {{ state.publisherReady ? `${platformName} collegato` : `In attesa di ${platformName}…` }}
     </span>
     <span v-if="state.obs.drive" class="pill" :class="obs.status === 'connected' ? 'ok' : 'wait'" :title="obs.error">{{ obsLabel() }}</span>
     <label class="drive" title="I gruppi cambiano scene ed elementi di OBS in base al numero di partecipanti">
       <input type="checkbox" :checked="state.obs.drive" @change="toggleDrive" /> Pilota OBS
     </label>
-    <label class="drive" title="Passa al layout personalizzato con tutti i riquadri a piena altezza: gli ospiti inviano alla massima risoluzione. Cambia anche il layout della diretta di StreamYard.">
+    <label v-if="state.settings.platform === 'streamyard'" class="drive" title="Passa al layout personalizzato con tutti i riquadri a piena altezza: gli ospiti inviano alla massima risoluzione. Cambia anche il layout della diretta di StreamYard.">
       <input type="checkbox" :checked="state.fullRes.on" @change="setFullRes(!state.fullRes.on)" /> Ospiti a piena risoluzione
     </label>
-    <span v-if="fullResInfo()" class="gpill" :class="fullResInfo()!.cls" :title="fullResInfo()!.title">{{ fullResInfo()!.text }}</span>
+    <span v-if="state.settings.platform === 'streamyard' && fullResInfo()" class="gpill" :class="fullResInfo()!.cls" :title="fullResInfo()!.title">{{ fullResInfo()!.text }}</span>
     <div class="spacer" />
-    <button @click="studio('show')">Mostra StreamYard</button>
+    <button @click="studio('show')">Mostra {{ platformName }}</button>
     <button class="ghost" @click="studio('reload')">Ricarica</button>
   </header>
 

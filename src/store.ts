@@ -14,7 +14,7 @@ export const state = reactive<AppState>({
   outputs: [],
   slots: {},
   viewers: {},
-  settings: { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, emptyBg: "transparent", priority: [] },
+  settings: { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, platform: "streamyard", emptyBg: "transparent", priority: [] },
   groups: [],
   obs: { url: "ws://127.0.0.1:4455", password: "", drive: false },
   fullRes: { on: false, status: "off", layout: "OBSYard" },

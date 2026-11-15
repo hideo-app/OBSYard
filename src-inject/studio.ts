@@ -38,6 +38,10 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     lastFrameAt?: number;
     /** nessun frame da un po' (camera spenta, ospite congelato) */
     stalled?: boolean;
+    /** Discord: ssrc ricevuto (dalle statistiche) e a chi appartiene (dalla connessione vocale) */
+    ssrc?: number;
+    dcUser?: string;
+    dcKind?: "video" | "screen";
     w?: number;
     h?: number;
   }
@@ -80,12 +84,34 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     }
     return undefined;
   };
+  // ------------------------------------------ Discord (connessione vocale)
+  // La connessione vocale (wss://*.discord.media, JSON) dice a chi appartiene ogni ssrc:
+  //   op 12 "video": { user_id, audio_ssrc, video_ssrc, streams: [{ type: "video"|"screen", ssrc, rtx_ssrc, active }] }
+  //   op 5 "speaking": { user_id, ssrc }   op 13 "client disconnect": { user_id }
+  // Le connessioni "Go Live" (schermo condiviso) sono connessioni vocali a parte.
+  const IS_DISCORD = /(^|\.)discord\.com$/.test(location.hostname);
+  const dcSsrc = new Map<number, { user: string; kind: "video" | "screen" }>();
+  /** "utente:tipo" -> video attivo */
+  const dcActive = new Map<string, boolean>();
+  const dcStreamWs = new WeakSet<WebSocket>();
+  const dcNames = new Map<string, string>();
+  const dcKey = (e: Entry) => `${e.dcUser}:${e.dcKind}`;
+
   /** undefined = non sappiamo (es. pagina di test): la consideriamo visibile */
   const onAir = (e: Entry): boolean | undefined => {
+    if (IS_DISCORD && e.origin === "remote") {
+      // tracce non legate a nessuno: Discord prepara connessioni vuote in anticipo
+      if (!e.dcUser) return false;
+      return e.track.kind === "audio" || dcActive.get(dcKey(e)) !== false;
+    }
     const s = syInfo(e);
     return s ? s.privacy === "public" : undefined;
   };
   const labelOf = (e: Entry) => {
+    if (IS_DISCORD && e.dcUser) {
+      const name = dcNames.get(e.dcUser) ?? `Utente …${e.dcUser.slice(-4)}`;
+      return e.dcKind === "screen" ? `${name} (schermo)` : name;
+    }
     const s = syInfo(e);
     const name = s && syNames.get(s.clientId);
     if (!name) return e.label;
@@ -94,7 +120,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   /** tracce terminate: servono per ri-agganciare automaticamente lo stesso ospite se riconnette */
   const ended = new Map<string, { kind: string; origin: TrackOrigin; label: string }>();
   let slots: Record<string, SlotAssign> = {};
-  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, emptyBg: "transparent", priority: [] };
+  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, platform: "streamyard", emptyBg: "transparent", priority: [] };
   let outputs: Output[] = [];
   let thumbsOn = true;
   const counters: Record<TrackOrigin, number> = { remote: 0, camera: 0, screen: 0 };
@@ -281,6 +307,126 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     }
   };
 
+  /** Messaggi della connessione vocale di Discord: ssrc -> utente, video attivo. */
+  const dcMessage = (ws: WebSocket, data: unknown) => {
+    if (!IS_DISCORD || typeof data !== "string" || !/discord\.media/.test(ws.url)) return;
+    let m: any;
+    try {
+      m = JSON.parse(data);
+    } catch {
+      return;
+    }
+    const d = m?.d;
+    if (!d) return;
+    let changed = false;
+    const map = (ssrc: unknown, user: string, kind: "video" | "screen") => {
+      if (typeof ssrc !== "number" || !ssrc) return;
+      const cur = dcSsrc.get(ssrc);
+      if (cur?.user !== user || cur?.kind !== kind) {
+        dcSsrc.set(ssrc, { user, kind });
+        changed = true;
+      }
+    };
+    const setActive = (key: string, on: boolean) => {
+      if (dcActive.get(key) !== on) {
+        dcActive.set(key, on);
+        changed = true;
+      }
+    };
+    if (m.op === 12 && d.user_id) {
+      const user = String(d.user_id);
+      const streams: any[] = Array.isArray(d.streams) ? d.streams : [];
+      if (streams.some((s) => s.type === "screen")) dcStreamWs.add(ws);
+      const base = dcStreamWs.has(ws) ? "screen" : "video";
+      map(d.audio_ssrc, user, base);
+      map(d.video_ssrc, user, base);
+      map(d.rtx_ssrc, user, base);
+      for (const s of streams) {
+        const kind = s.type === "screen" ? "screen" : base;
+        map(s.ssrc, user, kind);
+        map(s.rtx_ssrc, user, kind);
+      }
+      if (streams.length) setActive(`${user}:${streams[0].type === "screen" ? "screen" : base}`, streams.some((s) => s.active !== false && s.ssrc));
+      else if ("video_ssrc" in d) setActive(`${user}:${base}`, !!d.video_ssrc);
+    } else if (m.op === 5 && d.user_id) {
+      map(d.ssrc, String(d.user_id), dcStreamWs.has(ws) ? "screen" : "video");
+    } else if (m.op === 13 && d.user_id) {
+      const user = String(d.user_id);
+      setActive(`${user}:video`, false);
+      setActive(`${user}:screen`, false);
+    }
+    if (changed) void dcResolve();
+  };
+
+  /** Nome di un utente Discord dalla pagina: l'URL dell'avatar contiene l'id utente. */
+  const dcFindName = (id: string): string | null => {
+    for (const img of document.querySelectorAll<HTMLImageElement>(`img[src*="/avatars/${id}/"]`)) {
+      const own = (img.getAttribute("aria-label") || img.alt || "").replace(/,.*$/, "").trim();
+      if (own && own.length <= 40 && !/avatar/i.test(own)) return own;
+      let node: Element | null = img.parentElement;
+      for (let depth = 0; node && depth < 5; depth++, node = node.parentElement) {
+        const line = ((node as HTMLElement).innerText || "")
+          .split("\n")
+          .map((s) => s.trim())
+          .find((s) => s.length >= 2 && s.length <= 40);
+        if (line) return line;
+      }
+    }
+    return null;
+  };
+
+  /** Lega ogni traccia remota al suo utente Discord leggendo l'ssrc dalle statistiche. */
+  let dcBusy = false;
+  const dcResolve = async () => {
+    if (!IS_DISCORD || dcBusy) return;
+    dcBusy = true;
+    let changed = false;
+    try {
+      for (const [uid, e] of [...tracks]) {
+        if (e.origin !== "remote" || !e.receiver) continue;
+        let ssrc: number | undefined;
+        try {
+          (await e.receiver.getStats()).forEach((s: any) => {
+            if (s.type === "inbound-rtp" && typeof s.ssrc === "number") ssrc = s.ssrc;
+          });
+        } catch {
+          continue;
+        }
+        if (ssrc === undefined) continue;
+        e.ssrc = ssrc;
+        const who = dcSsrc.get(ssrc);
+        if (!who || (who.user === e.dcUser && who.kind === e.dcKind)) continue;
+        if (e.dcUser && e.dcUser !== who.user) {
+          // Discord ha riusato la connessione per un altro utente: per noi è una sorgente nuova
+          tracks.delete(uid);
+          ended.set(uid, { kind: e.track.kind, origin: e.origin, label: labelOf(e) });
+          const fresh = `r${++seq}-${e.track.id}`;
+          uids.set(e.track, fresh);
+          tracks.set(fresh, e);
+        }
+        e.dcUser = who.user;
+        e.dcKind = who.kind;
+        changed = true;
+      }
+      // nomi: possono comparire nella pagina dopo
+      for (const e of tracks.values()) {
+        if (!e.dcUser) continue;
+        const name = dcFindName(e.dcUser);
+        if (name && dcNames.get(e.dcUser) !== name) {
+          dcNames.set(e.dcUser, name);
+          changed = true;
+        }
+      }
+    } finally {
+      dcBusy = false;
+    }
+    if (changed) {
+      publishTracks();
+      refreshAll();
+    }
+  };
+  if (IS_DISCORD) setInterval(dcResolve, 1000);
+
   const OrigWS = window.WebSocket;
   W.WebSocket = new Proxy(OrigWS, {
     construct(target, args, newTarget) {
@@ -288,6 +434,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
       sockets.push(ws);
       ws.addEventListener("message", (e) => {
         syMessage("in", e.data);
+        dcMessage(ws, e.data);
         record("in", ws, e.data);
       });
       ws.addEventListener("close", () => sockets.splice(sockets.indexOf(ws), 1));
@@ -326,7 +473,15 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   };
 
   Object.defineProperty(W, "__obsyardTap", {
-    value: { tap, sockets, debug: () => ({ syStreams: [...syStreams], syNames: [...syNames], localStream: [...localStream], offers: offerStream.size }) },
+    value: {
+      tap,
+      sockets,
+      debug: () => ({
+        syStreams: [...syStreams], syNames: [...syNames], localStream: [...localStream], offers: offerStream.size,
+        dcSsrc: [...dcSsrc], dcActive: [...dcActive], dcNames: [...dcNames],
+        tracks: [...tracks].map(([id, e]) => ({ id, kind: e.track.kind, origin: e.origin, ssrc: e.ssrc, dcUser: e.dcUser, dcKind: e.dcKind, onAir: onAir(e), label: labelOf(e) })),
+      }),
+    },
     enumerable: false,
   });
 
@@ -345,6 +500,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   };
 
   const scanLabels = () => {
+    if (IS_DISCORD) return; // su Discord i nomi arrivano dagli avatar (dcResolve)
     let changed = false;
     document.querySelectorAll("video,audio").forEach((el) => {
       const so = (el as HTMLMediaElement).srcObject;
@@ -432,7 +588,11 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
       const ve = vid ? tracks.get(vid) : undefined;
       if (ve) {
         const same = (e: Entry) =>
-          (ve.syStream && e.syStream === ve.syStream) ||
+          // Discord: stesso utente e stesso tipo (camera o Go Live). Solo questo: Discord può
+          // mettere le tracce di tutti nello stesso MediaStream.
+          IS_DISCORD && ve.dcUser
+            ? e.dcUser === ve.dcUser && e.dcKind === ve.dcKind
+            : (ve.syStream && e.syStream === ve.syStream) ||
           (!!localStream.get(ve.track.id) && localStream.get(e.track.id) === localStream.get(ve.track.id)) ||
           e.streamIds.some((s) => ve.streamIds.includes(s));
         for (const e of tracks.values())

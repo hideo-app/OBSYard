@@ -4,7 +4,7 @@
   "description": "Pagina StreamYard (remota): solo i comandi pub_* dell'app",
   "windows": ["studio"],
   "remote": {
-    "urls": ["https://streamyard.com/*", "https://*.streamyard.com/*", "http://127.0.0.1:*/*"]
+    "urls": ["https://streamyard.com/*", "https://*.streamyard.com/*", "https://discord.com/*", "https://*.discord.com/*", "http://127.0.0.1:*/*"]
   },
   "permissions": ["allow-pub-ready", "allow-pub-tracks", "allow-pub-signal", "allow-pub-thumbs", "allow-pub-fullres"]
 }

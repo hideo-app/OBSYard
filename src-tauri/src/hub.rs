@@ -53,12 +53,27 @@ pub struct Settings {
     /// chi va in onda entra da solo nel primo gruppo, in ordine di arrivo
     #[serde(default)]
     pub auto_add: bool,
+    /// piattaforma aperta nella finestra studio: "streamyard" o "discord"
+    #[serde(default = "default_platform")]
+    pub platform: String,
     /// cosa mostrano le uscite senza video (vuote, fuori onda, camera spenta): "transparent" o "black"
     #[serde(default = "default_empty_bg")]
     pub empty_bg: String,
     /// nomi con precedenza, in ordine (entrano davanti agli altri)
     #[serde(default)]
     pub priority: Vec<String>,
+}
+
+fn default_platform() -> String {
+    "streamyard".into()
+}
+
+/// pagina da aprire nella finestra studio per la piattaforma scelta
+pub fn platform_url(platform: &str) -> &'static str {
+    match platform {
+        "discord" => "https://discord.com/app",
+        _ => "https://streamyard.com/",
+    }
 }
 
 fn default_empty_bg() -> String {
@@ -71,7 +86,7 @@ fn default_full_res_layout() -> String {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { codec: "H264".into(), max_bitrate_kbps: 12_000, max_fps: 60, full_res_layout: default_full_res_layout(), auto_add: false, empty_bg: default_empty_bg(), priority: vec![] }
+        Self { codec: "H264".into(), max_bitrate_kbps: 12_000, max_fps: 60, full_res_layout: default_full_res_layout(), auto_add: false, platform: default_platform(), empty_bg: default_empty_bg(), priority: vec![] }
     }
 }
 
@@ -511,6 +526,18 @@ let p = Persisted {
     }
 
     pub fn set_settings(&mut self, mut s: Settings) {
+        if s.platform != "discord" {
+            s.platform = "streamyard".into();
+        }
+        if s.platform != self.settings.platform {
+            // cambio piattaforma: la finestra studio apre l'altro sito; tracce e uscite si svuotano da sole
+            if let Some(w) = self.app.as_ref().and_then(|a| a.get_webview_window("studio")) {
+                if let Ok(u) = platform_url(&s.platform).parse() {
+                    let _ = w.navigate(u);
+                }
+            }
+            self.full_res = false;
+        }
         s.priority = s.priority.iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
         let layout_changed = s.full_res_layout != self.settings.full_res_layout;
         let priority_changed = s.priority != self.settings.priority;

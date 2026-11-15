@@ -151,3 +151,6 @@ button.danger { color: var(--accent); background: transparent; }
 .bgpick select { padding: 3px 6px; font-size: 12px; }
 .msep { font-size: 11px; color: var(--muted); padding: 6px 10px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
 .msep:empty { padding: 0; margin-bottom: 4px; }
+
+/* ---------- piattaforma ---------- */
+.platform { padding: 3px 8px; font-size: 13px; font-weight: 600; }

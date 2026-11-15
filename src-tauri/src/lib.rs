@@ -54,8 +54,8 @@ fn open_popup(
     }
 }
 
-fn studio_url() -> String {
-    std::env::var("OBSYARD_URL").unwrap_or_else(|_| "https://streamyard.com/".into())
+fn studio_url(platform: &str) -> String {
+    std::env::var("OBSYARD_URL").unwrap_or_else(|_| hub::platform_url(platform).into())
 }
 
 // ---------- comandi chiamati dalla pagina StreamYard (publisher) ----------
@@ -193,6 +193,7 @@ pub fn run() {
                 h.app = Some(app.handle().clone());
                 h.load(app.path().app_config_dir()?.join("config.json"));
             }
+            let platform = hub.lock().unwrap().settings.platform.clone();
             let listener = server::bind(PORT)
                 .map_err(|e| format!("porta 127.0.0.1:{PORT} occupata ({e}): OBSYard è già aperto?"))?;
             tauri::async_runtime::spawn(server::serve(hub.clone(), listener));
@@ -205,7 +206,7 @@ pub fn run() {
                 .additional_browser_args(&args)
                 .build()?;
 
-            WebviewWindowBuilder::new(app, "studio", WebviewUrl::External(studio_url().parse()?))
+            WebviewWindowBuilder::new(app, "studio", WebviewUrl::External(studio_url(&platform).parse()?))
                 .title("OBSYard – StreamYard")
                 .inner_size(1440.0, 900.0)
                 .initialization_script(STUDIO_JS)

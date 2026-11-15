@@ -28,6 +28,8 @@ export interface Settings {
   fullResLayout: string;
   /** chi va in onda entra da solo nel primo gruppo, in ordine di arrivo */
   autoAdd: boolean;
+  /** piattaforma aperta nella finestra studio */
+  platform: "streamyard" | "discord";
   /** cosa mostrano le uscite senza video (vuote, fuori onda, camera spenta) */
   emptyBg: "transparent" | "black";
   /** nomi con precedenza, in ordine: entrano davanti agli altri */
