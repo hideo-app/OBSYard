@@ -14,6 +14,8 @@ const out = computed(() => outputById(props.slot));
 const a = computed(() => state.slots[props.slot] ?? { video: null, audio: "auto" });
 const video = computed(() => trackById(a.value.video));
 const viewers = computed(() => state.viewers[props.slot] ?? 0);
+/** la sorgente "OBSYard" del plugin OBS legge questa uscita (senza ricodifica) */
+const native = computed(() => !!state.native[String(props.slot)]);
 const group = computed(() => groupOfSlot(props.slot));
 const inGroup = computed(() => props.fillIndex != null);
 const tally = computed(() => tallyOf(props.slot));
@@ -208,6 +210,7 @@ const mbps = (k?: number) => (k == null ? "…" : (k / 1000).toFixed(1));
       </div>
     </div>
     <button class="url" :title="`${slotUrl(slot)}\nCon il nome: ${slotNameUrl(slot)} (menu ⋮)`" @click="copy()">{{ copied ? "Copiato!" : "Copia URL" }}</button>
+    <span v-if="native" class="tag plug" title="La sorgente OBSYard del plugin OBS legge questa uscita: immagine e audio senza ricodifica">plugin</span>
     <button
       class="obs" :class="{ on: viewers, open: showStats }" :aria-expanded="showStats"
       :title="viewers ? `${viewers} fonti OBS collegate: clic per i dettagli della connessione` : 'Nessuna fonte OBS ha aperto questa uscita'"

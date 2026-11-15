@@ -14,6 +14,7 @@ export const state = reactive<AppState>({
   outputs: [],
   slots: {},
   viewers: {},
+  native: {},
   dups: [],
   tally: {},
   lowerThirds: {},

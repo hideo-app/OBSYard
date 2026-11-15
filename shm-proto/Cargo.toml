@@ -1,0 +1,10 @@
+[package]
+name = "obsyard-shm"
+version = "0.1.0"
+edition = "2021"
+description = "Layouts OBSYard shares with its OBS plugin through named shared memory"
+license = "MIT"
+
+[lib]
+name = "obsyard_shm"
+path = "src/lib.rs"

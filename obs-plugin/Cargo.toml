@@ -1,0 +1,23 @@
+[package]
+name = "obsyard-obs"
+version = "0.1.0"
+description = "OBS Studio plugin: the \"OBSYard\" source shows an OBSYard output (picture and sound) with no encoding on the way"
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "obsyard_obs"
+crate-type = ["cdylib"]
+
+[dependencies]
+# the layouts and names shared with OBSYard
+obsyard-shm = { path = "../shm-proto" }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Memory"] }
+
+[profile.release]
+# never unwind into OBS
+panic = "abort"
+opt-level = 3
+
+[profile.dev]
+panic = "abort"

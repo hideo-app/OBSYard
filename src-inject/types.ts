@@ -114,6 +114,8 @@ export interface AppState {
   outputs: Output[];
   slots: Record<string, SlotAssign>;
   viewers: Record<string, number>;
+  /** uscite lette dal plugin OBS nativo (sorgente "OBSYard" in OBS) */
+  native: Record<string, boolean>;
   /** uscite dei gruppi che mostrano un duplicato (la stessa sorgente è anche altrove) */
   dups: number[];
   /** tally per uscita, dalle fonti OBS: in programma, o solo visibile (anteprima) */

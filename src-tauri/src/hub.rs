@@ -580,6 +580,12 @@ let p = Persisted {
         self.emit_state();
     }
 
+    // ---------- plugin OBS nativo ----------
+    /// il plugin ha cominciato (o smesso) a leggere un'uscita: lo studio la cattura (o smette)
+    pub fn native_capture(&self, slot: u32, on: bool, audio: bool) {
+        self.to_studio(json!({"type": "native", "slot": slot, "on": on, "audio": audio}));
+    }
+
     // ---------- tally e statistiche dalle fonti OBS ----------
     pub fn viewer_tally(&mut self, id: u64, active: bool, visible: bool) {
         if let Some(v) = self.viewers.get_mut(&id) {
@@ -656,12 +662,26 @@ let p = Persisted {
                 tally.entry(v.slot).or_insert("preview");
             }
         }
+        // sorgenti "OBSYard" del plugin nativo: lo legge, in programma, visibile
+        let native = crate::native::status();
+        let mut native_view: BTreeMap<u32, bool> = BTreeMap::new();
+        for (id, (reading, active, showing)) in &native {
+            if *reading {
+                native_view.insert(*id, true);
+            }
+            if *active {
+                tally.insert(*id, "program");
+            } else if *showing {
+                tally.entry(*id).or_insert("preview");
+            }
+        }
         let lower_thirds: BTreeMap<u32, Value> = self
             .outputs
             .iter()
             .filter_map(|o| self.lower_third_of(o.id).map(|(name, title, kind)| (o.id, json!({"name": name, "title": title, "kind": kind}))))
             .collect();
         json!({
+            "native": native_view,
             "dups": self.groups.dup_slots(),
             "tally": tally,
             "lowerThirds": lower_thirds,
@@ -682,6 +702,13 @@ let p = Persisted {
     pub fn emit_state(&self) {
         // ogni cambio di stato può cambiare chi è su un'uscita: le pagine scartano i testi uguali
         self.push_lower_thirds();
+        // uscite per il plugin OBS (nome e sfondo senza video)
+        let list: Vec<(u32, String, bool)> = self
+            .outputs
+            .iter()
+            .map(|o| (o.id, o.name.clone(), o.bg.as_deref().unwrap_or(&self.settings.empty_bg) == "black"))
+            .collect();
+        crate::native::set_outputs(&list);
         if let Some(app) = &self.app {
             let _ = app.emit_to("control", "state", self.snapshot());
         }
@@ -712,6 +739,13 @@ let p = Persisted {
             "thumbs": self.thumbs,
         }));
         self.push_full_res();
+        // plugin OBS: la pagina nuova non ha i buffer condivisi, glieli ripassiamo
+        if let Some(app) = &self.app {
+            crate::native::repost(app);
+            for (id, audio) in crate::native::readers() {
+                self.native_capture(id, true, audio);
+            }
+        }
         // La pagina è stata (ri)caricata: le vecchie PeerConnection sono morte.
         for (id, v) in &self.viewers {
             let _ = v.tx.send(json!({"type": "reset"}).to_string());

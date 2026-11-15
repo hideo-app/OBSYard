@@ -60,7 +60,7 @@ code { background: #222634; padding: 1px 5px; border-radius: 4px; font-size: 12p
 .slotbtn { width: 28px; height: 28px; padding: 0; font-size: 12px; }
 .slotbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
 
-.slot { position: relative; display: grid; grid-template-columns: 18px 64px 1fr auto auto auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; margin-bottom: 6px; }
+.slot { position: relative; display: grid; grid-template-columns: 18px 64px 1fr auto auto auto auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; margin-bottom: 6px; }
 .num { font-weight: 700; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
 .slot.live .num { color: var(--text); }
 .mini { width: 64px; aspect-ratio: 16/9; background: #000; border-radius: 4px; overflow: hidden; }
@@ -293,3 +293,4 @@ html { scrollbar-gutter: stable; }
 .copt small { color: var(--muted); font-size: 12px; font-weight: 400; }
 .copt.primary small { color: rgb(255 255 255 / .85); }
 .copt.plain { background: transparent; }
+.tag.plug { background: #143d2b; border-color: #1f5a41; color: var(--ok); font-weight: 600; }

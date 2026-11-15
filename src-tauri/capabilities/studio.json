@@ -6,5 +6,5 @@
   "remote": {
     "urls": ["https://streamyard.com/*", "https://*.streamyard.com/*", "https://discord.com/*", "https://*.discord.com/*", "http://127.0.0.1:*/*"]
   },
-  "permissions": ["allow-pub-ready", "allow-pub-tracks", "allow-pub-signal", "allow-pub-thumbs", "allow-pub-fullres"]
+  "permissions": ["allow-pub-ready", "allow-pub-tracks", "allow-pub-signal", "allow-pub-thumbs", "allow-pub-fullres", "allow-pub-native-grow"]
 }

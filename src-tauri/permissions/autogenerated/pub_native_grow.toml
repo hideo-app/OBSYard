@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pub-native-grow"
+description = "Enables the pub_native_grow command without any pre-configured scope."
+commands.allow = ["pub_native_grow"]
+
+[[permission]]
+identifier = "deny-pub-native-grow"
+description = "Denies the pub_native_grow command without any pre-configured scope."
+commands.deny = ["pub_native_grow"]

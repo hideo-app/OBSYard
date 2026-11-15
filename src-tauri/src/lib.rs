@@ -1,5 +1,6 @@
 mod groups;
 mod hub;
+mod native;
 mod server;
 
 use groups::GroupConfig;
@@ -78,6 +79,12 @@ fn pub_signal(hub: State<SharedHub>, viewer_id: u64, msg: Value) {
 #[tauri::command]
 fn pub_fullres(hub: State<SharedHub>, status: String) {
     hub.lock().unwrap().full_res_report(status);
+}
+
+/// lo studio ha un fotogramma che non entra nel buffer verso il plugin OBS
+#[tauri::command]
+fn pub_native_grow(app: tauri::AppHandle, slot: u32, bytes: usize) {
+    native::grow(&app, slot, bytes);
 }
 
 #[tauri::command]
@@ -214,7 +221,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(hub.clone())
         .invoke_handler(tauri::generate_handler![
-            pub_ready, pub_tracks, pub_signal, pub_thumbs, pub_fullres, set_full_res,
+            pub_ready, pub_tracks, pub_signal, pub_thumbs, pub_fullres, pub_native_grow, set_full_res,
             get_state, assign, set_settings, set_thumbs, studio_action,
             group_save, group_delete, group_remove, set_obs, group_end_fill,
             output_add, output_update, output_move, output_delete,
@@ -233,6 +240,7 @@ pub fn run() {
                 h.load(dir.join("config.json"));
             }
             let platform = hub.lock().unwrap().settings.platform.clone();
+            native::start(app.handle().clone());
             let listener = server::bind(PORT)
                 .map_err(|e| format!("porta 127.0.0.1:{PORT} occupata ({e}): OBSYard è già aperto?"))?;
             tauri::async_runtime::spawn(server::serve(hub.clone(), listener));

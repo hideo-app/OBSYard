@@ -17,6 +17,8 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
 
   const OrigPC: typeof RTCPeerConnection = window.RTCPeerConnection;
   const log = (...a: unknown[]) => console.debug("[obsyard]", ...a);
+  /** ponte WebView2 (buffer condivisi verso il plugin OBS), preso prima che la pagina giri */
+  const webview: any = W.chrome?.webview;
 
   const invoke = (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
     const t = W.__TAURI_INTERNALS__;
@@ -682,6 +684,12 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
       debug: () => ({
         syStreams: [...syStreams], syNames: [...syNames], localStream: [...localStream], offers: offerStream.size,
         dcSsrc: [...dcSsrc], dcActive: [...dcActive], dcNames: [...dcNames], dcSelf, dcSent: dcSent.size, pcs: allPcs.size,
+        natives: [...natives].map(([slot, n]) => ({
+          slot, on: n.on, audioOn: n.audioOn, video: !!n.video, audio: !!n.audio, vTrack: n.vTrack?.label, aTrack: n.aTrack?.label, aNodes: !!n.aNodes,
+          written: n.audio ? Number(new DataView(n.audio.buf).getBigUint64(8, true)) : null,
+          seq: n.video ? new DataView(n.video.buf).getUint32(4, true) : null,
+          want: resolveSlot(slot).audio?.label ?? null,
+        })),
         tracks: [...tracks].map(([id, e]) => ({ id, kind: e.track.kind, origin: e.origin, ssrc: e.ssrc, dcUser: e.dcUser, dcKind: e.dcKind, onAir: onAir(e), label: labelOf(e) })),
       }),
     },
@@ -799,7 +807,10 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
           // mettere le tracce di tutti nello stesso MediaStream.
           IS_DISCORD && ve.dcUser
             ? e.dcUser === ve.dcUser && e.dcKind === ve.dcKind
-            : (ve.syStream && e.syStream === ve.syStream) ||
+            : // Discord, la nostra camera: il microfono che Discord invia (un'altra traccia, elaborata)
+              IS_DISCORD && ve.origin === "camera"
+              ? e.origin === "camera" && dcSent.has(e.track)
+              : (ve.syStream && e.syStream === ve.syStream) ||
           (!!localStream.get(ve.track.id) && localStream.get(e.track.id) === localStream.get(ve.track.id)) ||
           e.streamIds.some((s) => ve.streamIds.includes(s));
         for (const e of tracks.values())
@@ -903,14 +914,17 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     }
   };
 
+  /** c'è video solo se la traccia produce frame e la piattaforma non la segna come camera spenta */
+  const videoActive = (video: MediaStreamTrack | null) => {
+    const ve = tracks.get(uidOf(video) ?? "");
+    return !!video && video.enabled && !video.muted && !ve?.stalled && !(ve && syInfo(ve)?.hasVideo === false);
+  };
+
   const applyTracks = async (s: Sub) => {
     const { video, audio } = resolveSlot(s.slot);
     if (s.v.sender.track !== video) await s.v.sender.replaceTrack(video).catch((e) => log("replaceTrack", e));
     if (s.a.sender.track !== audio) await s.a.sender.replaceTrack(audio).catch((e) => log("replaceTrack", e));
-    // c'è video solo se la traccia produce frame e StreamYard non la segna come camera spenta
-    const ve = tracks.get(uidOf(video) ?? "");
-    const active =
-      !!video && video.enabled && !video.muted && !ve?.stalled && !(ve && syInfo(ve)?.hasVideo === false);
+    const active = videoActive(video);
     if (s.active !== active) {
       s.active = active;
       sendState(s);
@@ -927,7 +941,206 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     queueMicrotask(() => {
       refreshQueued = false;
       subs.forEach((s) => void applyTracks(s));
+      natives.forEach((_, slot) => nativeRefresh(slot));
     });
+  }
+
+  // ---------------------------------------- uscite verso il plugin OBS nativo
+  // Per ogni uscita che la sorgente "OBSYard" di OBS legge, OBSYard ci passa due buffer condivisi
+  // WebView2 (video e audio). Qui ci scriviamo i fotogrammi COME IL BROWSER LI HA DECODIFICATI
+  // (MediaStreamTrackProcessor + VideoFrame.copyTo), senza ricodifica; Rust li copia nella memoria
+  // che il plugin legge. Formato in src-tauri/src/native.rs.
+  interface NativeOut {
+    on: boolean;
+    /** la sorgente in OBS vuole anche l'audio (spento nelle sue proprietà: non lo catturiamo) */
+    audioOn?: boolean;
+    video?: { buf: ArrayBuffer; slotSize: number };
+    audio?: { buf: ArrayBuffer };
+    vTrack?: MediaStreamTrack;
+    vClone?: MediaStreamTrack;
+    vReader?: ReadableStreamDefaultReader<any>;
+    busy?: boolean;
+    growing?: boolean;
+    empty?: boolean;
+    aTrack?: MediaStreamTrack;
+    aNodes?: { src: AudioNode; proc: ScriptProcessorNode; mute: GainNode; el: HTMLAudioElement };
+  }
+  const natives = new Map<number, NativeOut>();
+  const nat = (slot: number) => {
+    let n = natives.get(slot);
+    if (!n) natives.set(slot, (n = { on: false }));
+    return n;
+  };
+  const NV_SLOTS = 3;
+  const NV_HEADER = 4096;
+  /** VideoFrame.format -> enum video_format di OBS */
+  const NV_FORMAT: Record<string, number> = { I420: 1, I420A: 1, NV12: 2, RGBA: 6, RGBX: 6, BGRA: 7, BGRX: 8, I444: 10 };
+  const NV_PLANES: Record<string, number> = { I420: 3, I420A: 3, NV12: 2, RGBA: 1, RGBX: 1, BGRA: 1, BGRX: 1, I444: 3 };
+
+  webview?.addEventListener?.("sharedbufferreceived", (e: any) => {
+    const d = e.additionalData;
+    if (!d?.obsyard) return;
+    const buf: ArrayBuffer = e.getBuffer();
+    const n = nat(Number(d.slot));
+    if (d.obsyard === "video") {
+      if (n.video) webview.releaseBuffer?.(n.video.buf);
+      n.video = { buf, slotSize: new DataView(buf).getUint32(12, true) };
+      n.growing = false;
+      n.empty = undefined;
+    } else {
+      if (n.audio) webview.releaseBuffer?.(n.audio.buf);
+      n.audio = { buf };
+    }
+    log("plugin OBS: buffer", d.obsyard, d.slot);
+    nativeRefresh(Number(d.slot));
+  });
+
+  /** scrive nel prossimo slot la descrizione di un fotogramma (o "nessuna immagine") e lo pubblica */
+  const nvPublish = (v: NonNullable<NativeOut["video"]>, next: number, meta: number[]) => {
+    const dv = new DataView(v.buf);
+    const m = 16 + next * 64;
+    meta.forEach((x, i) => dv.setUint32(m + i * 4, x >>> 0, true));
+    dv.setUint32(4, (dv.getUint32(4, true) + 1) >>> 0, true);
+  };
+
+  const nvEmpty = (n: NativeOut) => {
+    const v = n.video;
+    if (!v || n.empty) return;
+    const next = (new DataView(v.buf).getUint32(4, true) + 1) % NV_SLOTS;
+    nvPublish(v, next, new Array(16).fill(0));
+    n.empty = true;
+  };
+
+  const nvWrite = async (slot: number, n: NativeOut, frame: any) => {
+    const v = n.video;
+    if (!v || n.busy) return; // OBS è indietro: questo fotogramma si salta
+    let fmt: string = frame.format;
+    let opts: any = {};
+    if (!fmt || !(fmt in NV_FORMAT)) {
+      fmt = "RGBA"; // formato non leggibile da OBS: il browser lo converte
+      opts = { format: "RGBA" };
+    }
+    const size: number = frame.allocationSize(opts);
+    if (size > v.slotSize) {
+      if (!n.growing) {
+        n.growing = true;
+        invoke("pub_native_grow", { slot, bytes: size }).catch(() => (n.growing = false));
+      }
+      return;
+    }
+    n.busy = true;
+    try {
+      const next = (new DataView(v.buf).getUint32(4, true) + 1) % NV_SLOTS;
+      const layout: { offset: number; stride: number }[] = await frame.copyTo(new Uint8Array(v.buf, NV_HEADER + next * v.slotSize, size), opts);
+      if (n.video !== v) return; // buffer cambiato nel frattempo
+      const cs = frame.colorSpace ?? {};
+      const rgb = NV_PLANES[fmt] === 1;
+      const colorspace = rgb ? 3 : cs.matrix === "bt470bg" || cs.matrix === "smpte170m" ? 1 : 2;
+      const planes = NV_PLANES[fmt];
+      const off = [0, 0, 0, 0], str = [0, 0, 0, 0];
+      layout.slice(0, planes).forEach((l, i) => ((off[i] = l.offset), (str[i] = l.stride)));
+      const r = frame.visibleRect ?? { width: frame.displayWidth, height: frame.displayHeight };
+      nvPublish(v, next, [r.width, r.height, NV_FORMAT[fmt], colorspace, cs.fullRange ? 1 : 0, planes, ...off, ...str, size, 0]);
+      n.empty = false;
+    } catch (e) {
+      log("plugin OBS: copia", e);
+    } finally {
+      n.busy = false;
+    }
+  };
+
+  const nvStopVideo = (n: NativeOut) => {
+    n.vReader?.cancel().catch(() => {});
+    n.vClone?.stop();
+    n.vReader = n.vClone = n.vTrack = undefined;
+  };
+
+  const nvStartVideo = (slot: number, n: NativeOut, track: MediaStreamTrack) => {
+    const Proc = W.MediaStreamTrackProcessor;
+    if (!Proc) return log("plugin OBS: MediaStreamTrackProcessor non disponibile");
+    const clone = track.clone();
+    const reader = new Proc({ track: clone }).readable.getReader();
+    Object.assign(n, { vTrack: track, vClone: clone, vReader: reader });
+    void (async () => {
+      for (;;) {
+        const r = await reader.read().catch(() => ({ done: true, value: undefined }));
+        if (r.done || !r.value) break;
+        const frame = r.value;
+        if (n.vReader !== reader) {
+          frame.close();
+          break;
+        }
+        // copia in corso: il fotogramma si chiude subito (niente coda di frame aperti)
+        if (n.busy) frame.close();
+        else void nvWrite(slot, n, frame).finally(() => frame.close());
+      }
+    })();
+  };
+
+  let nvCtx: AudioContext | null = null;
+  const nvStopAudio = (n: NativeOut) => {
+    const a = n.aNodes;
+    if (a) {
+      a.proc.onaudioprocess = null;
+      a.src.disconnect();
+      a.proc.disconnect();
+      a.mute.disconnect();
+      a.el.srcObject = null;
+    }
+    n.aNodes = n.aTrack = undefined;
+  };
+  const nvStartAudio = (n: NativeOut, track: MediaStreamTrack) => {
+    nvCtx ??= new AudioContext({ sampleRate: 48000 });
+    void nvCtx.resume().catch(() => {});
+    // Chromium: l'audio WebRTC remoto arriva a Web Audio solo se un elemento lo riproduce (muto)
+    const el = new Audio();
+    el.muted = true;
+    el.srcObject = new MediaStream([track]);
+    void el.play().catch(() => {});
+    const src = nvCtx.createMediaStreamSource(new MediaStream([track]));
+    const proc = nvCtx.createScriptProcessor(1024, 2, 2);
+    const mute = nvCtx.createGain();
+    mute.gain.value = 0; // il processore gira solo se collegato all'uscita: in silenzio
+    proc.onaudioprocess = (ev) => {
+      const a = n.audio;
+      if (!a) return;
+      const dv = new DataView(a.buf);
+      const cap = dv.getUint32(4, true);
+      if (!cap) return;
+      const ring = new Float32Array(a.buf, 64, cap * 2);
+      const L = ev.inputBuffer.getChannelData(0);
+      const R = ev.inputBuffer.numberOfChannels > 1 ? ev.inputBuffer.getChannelData(1) : L;
+      let w = Number(dv.getBigUint64(8, true));
+      for (let i = 0; i < L.length; i++, w++) {
+        const p = (w % cap) * 2;
+        ring[p] = L[i];
+        ring[p + 1] = R[i];
+      }
+      dv.setBigUint64(8, BigInt(w), true);
+    };
+    src.connect(proc);
+    proc.connect(mute);
+    mute.connect(nvCtx.destination);
+    n.aTrack = track;
+    n.aNodes = { src, proc, mute, el };
+  };
+
+  /** allinea la cattura di un'uscita a cosa mostra ora (cambio sorgente: subito, senza attese) */
+  function nativeRefresh(slot: number) {
+    const n = natives.get(slot);
+    if (!n) return;
+    const { video, audio } = n.on ? resolveSlot(slot) : { video: null, audio: null };
+    const wantV = n.video && video && videoActive(video) ? video : null;
+    if (wantV !== (n.vTrack ?? null)) {
+      nvStopVideo(n);
+      if (wantV) nvStartVideo(slot, n, wantV);
+    }
+    if (!wantV && n.on) nvEmpty(n);
+    const wantA = n.audio && n.audioOn !== false && audio ? audio : null;
+    if (wantA !== (n.aTrack ?? null)) {
+      nvStopAudio(n);
+      if (wantA) nvStartAudio(n, wantA);
+    }
   }
 
   const closeSub = (viewerId: number) => {
@@ -1137,6 +1350,18 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
       case "thumbs":
         thumbsOn = m.on;
         break;
+      case "native": {
+        // il plugin OBS ha cominciato (o smesso) a leggere un'uscita
+        const n = nat(Number(m.slot));
+        n.on = !!m.on;
+        n.audioOn = m.audio !== false;
+        if (!n.on) {
+          nvStopVideo(n);
+          nvStopAudio(n);
+        }
+        nativeRefresh(Number(m.slot));
+        break;
+      }
       case "fullRes":
         if (IS_DISCORD) {
           if (m.on !== fullRes.on) {
