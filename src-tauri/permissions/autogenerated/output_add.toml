@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-output-add"
+description = "Enables the output_add command without any pre-configured scope."
+commands.allow = ["output_add"]
+
+[[permission]]
+identifier = "deny-output-add"
+description = "Denies the output_add command without any pre-configured scope."
+commands.deny = ["output_add"]

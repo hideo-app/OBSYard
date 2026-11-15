@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { state, saveGroup, deleteGroup, type GroupView, type GroupConfig } from "../store";
+import { state, saveGroup, deleteGroup, outputName, type GroupView, type GroupConfig } from "../store";
 import { obs, refreshCatalog, forceApply, SEP } from "../obs";
 
 const props = defineProps<{ group: GroupView | null }>();
 const emit = defineEmits<{ close: [] }>();
 
-const allSlots = Object.keys(state.slots).map(Number);
+const allSlots = state.outputs.map((o) => o.id);
 const takenBy = (n: number) => state.groups.find((g) => g.id !== props.group?.id && g.slots.includes(n));
 
 const form = reactive({
@@ -88,18 +88,18 @@ onMounted(() => {
       </label>
 
       <div class="field">
-        <span>Slot (ordine di riempimento: il partecipante 1 va sul primo)</span>
+        <span>Uscite (ordine di riempimento: il partecipante 1 va sulla prima)</span>
         <div class="slotpick">
           <button
-            v-for="n in allSlots" :key="n" type="button" class="slotbtn"
+            v-for="n in allSlots" :key="n" type="button" class="outbtn"
             :class="{ on: form.slots.includes(n) }" :disabled="!!takenBy(n)"
-            :title="takenBy(n) ? `Già nel gruppo ${takenBy(n)!.name}` : `Slot ${n}`"
+            :title="takenBy(n) ? `Già nel gruppo ${takenBy(n)!.name}` : outputName(n)"
             @click="toggleSlot(n)"
-          >{{ n }}</button>
+          >{{ outputName(n) }}</button>
         </div>
         <ol v-if="form.slots.length" class="order">
           <li v-for="(n, i) in form.slots" :key="n">
-            <span>#{{ i + 1 }} → slot {{ n }}</span>
+            <span>#{{ i + 1 }} → {{ outputName(n) }}</span>
             <button type="button" class="icon" :disabled="i === 0" title="Su" @click="move(i, -1)">↑</button>
             <button type="button" class="icon" :disabled="i === form.slots.length - 1" title="Giù" @click="move(i, 1)">↓</button>
           </li>
@@ -108,7 +108,7 @@ onMounted(() => {
 
       <div class="field">
         <span>Azioni OBS per numero di partecipanti <small>(facoltative, con "Pilota OBS" attivo)</small></span>
-        <p v-if="obs.status !== 'connected'" class="hint">OBS non connesso: scrivi scene ed elementi come appaiono in OBS.</p>
+        <p v-if="obs.status !== 'connected'" class="hint">OBS non connesso (si collega solo con "Pilota OBS" attivo): scrivi scene ed elementi come appaiono in OBS.</p>
         <datalist id="obs-scenes"><option v-for="s in obs.scenes" :key="s" :value="s" /></datalist>
         <datalist id="obs-items"><option v-for="s in obs.items" :key="s" :value="s" /></datalist>
         <div v-for="k in counts" :key="k" class="action">

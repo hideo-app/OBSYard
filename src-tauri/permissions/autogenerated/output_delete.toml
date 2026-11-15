@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-output-delete"
+description = "Enables the output_delete command without any pre-configured scope."
+commands.allow = ["output_delete"]
+
+[[permission]]
+identifier = "deny-output-delete"
+description = "Denies the output_delete command without any pre-configured scope."
+commands.deny = ["output_delete"]

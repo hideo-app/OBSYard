@@ -12,7 +12,20 @@ use crate::groups::{GroupConfig, Groups};
 use std::path::PathBuf;
 
 pub type SharedHub = Arc<Mutex<Hub>>;
-pub const SLOT_COUNT: u32 = 8;
+
+/// Uscita OBS (Fonte browser): id stabile (URL /slot/{id}), nome, ordine = posizione nel vettore.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct Output {
+    pub id: u32,
+    pub name: String,
+    /// eccezione allo sfondo globale senza video: "transparent" o "black" (null = come l'impostazione globale)
+    #[serde(default)]
+    pub bg: Option<String>,
+}
+
+fn default_outputs() -> Vec<Output> {
+    (1..=4).map(|i| Output { id: i, name: format!("Cam {i}"), bg: None }).collect()
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SlotAssign {
@@ -34,11 +47,31 @@ pub struct Settings {
     pub codec: String,
     pub max_bitrate_kbps: u32,
     pub max_fps: u32,
+    /// nome del layout personalizzato di StreamYard con tutti i riquadri a piena altezza
+    #[serde(default = "default_full_res_layout")]
+    pub full_res_layout: String,
+    /// chi va in onda entra da solo nel primo gruppo, in ordine di arrivo
+    #[serde(default)]
+    pub auto_add: bool,
+    /// cosa mostrano le uscite senza video (vuote, fuori onda, camera spenta): "transparent" o "black"
+    #[serde(default = "default_empty_bg")]
+    pub empty_bg: String,
+    /// nomi con precedenza, in ordine (entrano davanti agli altri)
+    #[serde(default)]
+    pub priority: Vec<String>,
+}
+
+fn default_empty_bg() -> String {
+    "transparent".into()
+}
+
+fn default_full_res_layout() -> String {
+    "OBSYard".into()
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { codec: "H264".into(), max_bitrate_kbps: 12_000, max_fps: 60 }
+        Self { codec: "H264".into(), max_bitrate_kbps: 12_000, max_fps: 60, full_res_layout: default_full_res_layout(), auto_add: false, empty_bg: default_empty_bg(), priority: vec![] }
     }
 }
 
@@ -65,6 +98,7 @@ impl Default for ObsConfig {
 #[serde(rename_all = "camelCase", default)]
 struct Persisted {
     settings: Settings,
+    outputs: Vec<Output>,
     groups: Vec<GroupConfig>,
     obs: ObsConfig,
 }
@@ -79,6 +113,7 @@ pub struct Hub {
     pub port: u16,
     pub viewers: HashMap<u64, Viewer>,
     next_id: u64,
+    pub outputs: Vec<Output>,
     pub slots: BTreeMap<u32, SlotAssign>,
     pub tracks: Value,
     pub settings: Settings,
@@ -87,6 +122,9 @@ pub struct Hub {
     pub groups: Groups,
     pub obs: ObsConfig,
     config_path: Option<PathBuf>,
+    /// toggle "ospiti a piena risoluzione" e stato riportato dallo studio
+    pub full_res: bool,
+    pub full_res_status: String,
 }
 
 impl Hub {
@@ -96,7 +134,8 @@ impl Hub {
             port,
             viewers: HashMap::new(),
             next_id: 1,
-            slots: (1..=SLOT_COUNT).map(|i| (i, SlotAssign::default())).collect(),
+            outputs: default_outputs(),
+            slots: (1..=4).map(|i| (i, SlotAssign::default())).collect(),
             tracks: json!([]),
             settings: Settings::default(),
             publisher_ready: false,
@@ -104,6 +143,8 @@ impl Hub {
             groups: Groups::default(),
             obs: ObsConfig::default(),
             config_path: None,
+            full_res: false,
+            full_res_status: "off".into(),
         }
     }
 
@@ -113,18 +154,112 @@ impl Hub {
             match serde_json::from_str::<Persisted>(&text) {
                 Ok(p) => {
                     self.settings = p.settings;
+                    if !p.outputs.is_empty() {
+                        self.outputs = p.outputs;
+                    }
                     self.groups = Groups::from_configs(p.groups);
                     self.obs = p.obs;
                 }
                 Err(e) => eprintln!("[obsyard] config non valida, ignorata: {e}"),
             }
         }
+        self.sync_slots();
         self.config_path = Some(path);
+    }
+
+    /// una SlotAssign per ogni uscita, nessuna in più
+    fn sync_slots(&mut self) {
+        let ids: Vec<u32> = self.outputs.iter().map(|o| o.id).collect();
+        self.slots.retain(|k, _| ids.contains(k));
+        for id in ids {
+            self.slots.entry(id).or_default();
+        }
+    }
+
+    pub fn has_output(&self, id: u32) -> bool {
+        self.outputs.iter().any(|o| o.id == id)
+    }
+
+    fn push_outputs(&self) {
+        self.to_studio(json!({"type": "outputs", "outputs": self.outputs}));
+    }
+
+    // ---------- uscite (dinamiche, come guestroom) ----------
+    pub fn output_add(&mut self, name: Option<String>) -> u32 {
+        let id = self.outputs.iter().map(|o| o.id).max().unwrap_or(0) + 1;
+        // prossimo "Cam N"
+        let n = self
+            .outputs
+            .iter()
+            .filter_map(|o| o.name.strip_prefix("Cam ").and_then(|n| n.trim().parse::<u32>().ok()))
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let name = name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or(format!("Cam {n}"));
+        self.outputs.push(Output { id, name, bg: None });
+        self.sync_slots();
+        self.persist();
+        self.push_outputs();
+        self.push_slots();
+        self.emit_state();
+        id
+    }
+
+    /// bg: None = non cambiare, "default" = come l'impostazione globale, "transparent" / "black"
+    pub fn output_update(&mut self, id: u32, name: Option<String>, bg: Option<String>) -> Result<(), String> {
+        let o = self.outputs.iter_mut().find(|o| o.id == id).ok_or("uscita inesistente")?;
+        if let Some(n) = name {
+            let n = n.trim();
+            if n.is_empty() {
+                return Err("il nome non può essere vuoto".into());
+            }
+            o.name = n.chars().take(40).collect();
+        }
+        if let Some(b) = bg {
+            o.bg = match b.as_str() {
+                "transparent" | "black" => Some(b),
+                _ => None,
+            };
+        }
+        self.persist();
+        self.push_outputs();
+        self.emit_state();
+        Ok(())
+    }
+
+    pub fn output_move(&mut self, id: u32, delta: i32) {
+        let Some(i) = self.outputs.iter().position(|o| o.id == id) else { return };
+        let j = i as i32 + delta;
+        if j < 0 || j >= self.outputs.len() as i32 {
+            return;
+        }
+        self.outputs.swap(i, j as usize);
+        self.persist();
+        self.emit_state();
+    }
+
+    pub fn output_delete(&mut self, id: u32) {
+        if !self.has_output(id) {
+            return;
+        }
+        self.outputs.retain(|o| o.id != id);
+        self.groups.remove_slot(id); // esce dal gruppo; un gruppo rimasto vuoto sparisce
+        self.sync_slots();
+        self.persist();
+        self.apply_groups();
+        self.push_outputs();
+        self.push_slots();
+        self.emit_state();
     }
 
     fn persist(&self) {
         let Some(path) = &self.config_path else { return };
-        let p = Persisted { settings: self.settings.clone(), groups: self.groups.configs.clone(), obs: self.obs.clone() };
+let p = Persisted {
+            settings: self.settings.clone(),
+            outputs: self.outputs.clone(),
+            groups: self.groups.configs.clone(),
+            obs: self.obs.clone(),
+        };
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -150,10 +285,35 @@ impl Hub {
             .unwrap_or_default()
     }
 
+    /// webcam in onda (niente schermi condivisi), nell'ordine in cui sono arrivate
+    fn live_webcams(&self) -> Vec<(String, String)> {
+        self.tracks
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|t| t["kind"] == "video" && t["origin"] != "screen")
+                    .filter_map(|t| Some((t["id"].as_str()?.to_string(), t["label"].as_str().unwrap_or("").to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// il primo gruppo nell'ordine delle uscite (quello in cima nella Regia)
+    fn first_group(&self) -> Option<u32> {
+        self.outputs.iter().find_map(|o| self.groups.group_of_slot(o.id))
+    }
+
     /// Ricalcola gli slot guidati dai gruppi. Ritorna true se qualche slot è cambiato.
     fn apply_groups(&mut self) -> bool {
         let live = self.live_video();
-        self.groups.rebind(&live);
+        let priority = self.settings.priority.clone();
+        self.groups.rebind(&live, &priority);
+        if self.settings.auto_add {
+            if let Some(gid) = self.first_group() {
+                let webcams = self.live_webcams();
+                self.groups.auto_add(gid, &webcams, &priority);
+            }
+        }
         let is_live = |t: &str| live.iter().any(|(id, _)| id == t);
         let mut changed = false;
         for (slot, track) in self.groups.fill(&is_live) {
@@ -180,7 +340,8 @@ impl Hub {
     }
 
     pub fn group_save(&mut self, g: GroupConfig) -> Result<u32, String> {
-        let id = self.groups.save(g, SLOT_COUNT)?;
+        let valid: Vec<u32> = self.outputs.iter().map(|o| o.id).collect();
+        let id = self.groups.save(g, &valid)?;
         self.persist();
         if self.apply_groups() {
             self.push_slots();
@@ -201,6 +362,21 @@ impl Hub {
         if self.apply_groups() {
             self.push_slots();
         }
+        self.emit_state();
+    }
+
+    fn push_full_res(&self) {
+        self.to_studio(json!({"type": "fullRes", "on": self.full_res, "layout": self.settings.full_res_layout}));
+    }
+
+    pub fn set_full_res(&mut self, on: bool) {
+        self.full_res = on;
+        self.push_full_res();
+        self.emit_state();
+    }
+
+    pub fn full_res_report(&mut self, status: String) {
+        self.full_res_status = status;
         self.emit_state();
     }
 
@@ -229,11 +405,13 @@ impl Hub {
             "port": self.port,
             "publisherReady": self.publisher_ready,
             "tracks": self.tracks,
+            "outputs": self.outputs,
             "slots": self.slots,
             "viewers": counts,
             "settings": self.settings,
             "groups": groups,
             "obs": self.obs,
+            "fullRes": { "on": self.full_res, "status": self.full_res_status, "layout": self.settings.full_res_layout },
         })
     }
 
@@ -264,8 +442,10 @@ impl Hub {
             "type": "init",
             "settings": self.settings,
             "slots": self.slots,
+            "outputs": self.outputs,
             "thumbs": self.thumbs,
         }));
+        self.push_full_res();
         // La pagina è stata (ri)caricata: le vecchie PeerConnection sono morte.
         for (id, v) in &self.viewers {
             let _ = v.tx.send(json!({"type": "reset"}).to_string());
@@ -330,8 +510,22 @@ impl Hub {
         self.emit_state();
     }
 
-    pub fn set_settings(&mut self, s: Settings) {
+    pub fn set_settings(&mut self, mut s: Settings) {
+        s.priority = s.priority.iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+        let layout_changed = s.full_res_layout != self.settings.full_res_layout;
+        let priority_changed = s.priority != self.settings.priority;
         self.settings = s;
+        if layout_changed {
+            self.push_full_res();
+        }
+        if priority_changed {
+            // elenco cambiato: i membri dei gruppi si riordinano una volta
+            self.groups.sort_by_priority(&self.settings.priority);
+        }
+        // aggiunta automatica appena attivata / precedenza cambiata: ricalcola le uscite
+        if self.apply_groups() {
+            self.push_slots();
+        }
         self.persist();
         self.to_studio(json!({"type": "settings", "settings": self.settings}));
         self.emit_state();

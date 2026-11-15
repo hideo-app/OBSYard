@@ -1,6 +1,6 @@
 //! Server locale per OBS: pagine "fonte browser" + WebSocket di signaling.
 
-use crate::hub::{SharedHub, SLOT_COUNT};
+use crate::hub::SharedHub;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -45,9 +45,11 @@ pub async fn serve(hub: SharedHub, std_listener: std::net::TcpListener) {
     let _ = axum::serve(listener, app).await;
 }
 
-async fn index() -> Html<String> {
-    let links: String = (1..=SLOT_COUNT)
-        .map(|i| format!("<li><a href=\"/slot/{i}\">/slot/{i}</a></li>"))
+async fn index(State(hub): State<SharedHub>) -> Html<String> {
+    let outputs = hub.lock().unwrap().outputs.clone();
+    let links: String = outputs
+        .iter()
+        .map(|o| format!("<li><a href=\"/slot/{0}\">{1}</a> <code>/slot/{0}</code></li>", o.id, html_escape(&o.name)))
         .collect();
     Html(format!(
         "<!doctype html><meta charset=utf-8><title>OBSYard</title>\
@@ -57,8 +59,12 @@ async fn index() -> Html<String> {
     ))
 }
 
-async fn slot_page(Path(n): Path<u32>) -> Response {
-    if !(1..=SLOT_COUNT).contains(&n) {
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+async fn slot_page(Path(n): Path<u32>, State(hub): State<SharedHub>) -> Response {
+    if !hub.lock().unwrap().has_output(n) {
         return (StatusCode::NOT_FOUND, "slot inesistente").into_response();
     }
     Html(format!(

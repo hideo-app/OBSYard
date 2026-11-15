@@ -113,6 +113,17 @@ function connect() {
   };
 }
 
+function disconnect() {
+  clearTimeout(retry);
+  const sock = ws;
+  ws = null; // onclose di questo socket non riprova (ws !== sock)
+  sock?.close();
+  pending.forEach((p) => p.ko(new Error("OBS disconnesso")));
+  pending.clear();
+  obs.status = "idle";
+  obs.error = "";
+}
+
 /** scene ed elementi di OBS (solo nomi), per i suggerimenti dell'editor */
 export async function refreshCatalog() {
   try {
@@ -212,14 +223,15 @@ export function forceApply(id: number) {
 
 export function startObs() {
   // riconnetti quando cambiano indirizzo o password
+  // collegati a OBS solo con "Pilota OBS" attivo; riconnetti se cambiano indirizzo o password
   watch(
-    () => [state.obs.url, state.obs.password] as const,
-    ([url, pw]) => {
-      const key = url + "\n" + pw;
-      if (key !== wanted) {
-        wanted = key;
-        connect();
-      }
+    () => [state.obs.drive, state.obs.url, state.obs.password] as const,
+    ([drive, url, pw]) => {
+      const key = drive ? url + "\n" + pw : "";
+      if (key === wanted) return;
+      wanted = key;
+      if (drive) connect();
+      else disconnect();
     },
     { immediate: true },
   );

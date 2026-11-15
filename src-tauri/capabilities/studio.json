@@ -6,5 +6,5 @@
   "remote": {
     "urls": ["https://streamyard.com/*", "https://*.streamyard.com/*", "http://127.0.0.1:*/*"]
   },
-  "permissions": ["allow-pub-ready", "allow-pub-tracks", "allow-pub-signal", "allow-pub-thumbs"]
+  "permissions": ["allow-pub-ready", "allow-pub-tracks", "allow-pub-signal", "allow-pub-thumbs", "allow-pub-fullres"]
 }

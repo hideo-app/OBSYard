@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pub-fullres"
+description = "Enables the pub_fullres command without any pre-configured scope."
+commands.allow = ["pub_fullres"]
+
+[[permission]]
+identifier = "deny-pub-fullres"
+description = "Denies the pub_fullres command without any pre-configured scope."
+commands.deny = ["pub_fullres"]

@@ -7,10 +7,14 @@
 //! - Mandare qualcuno su uno slot del gruppo: un membro si SCAMBIA con chi è lì,
 //!   un nuovo arrivato viene INSERITO lì e chi finisce oltre l'ultimo slot va in standby.
 //! - Svuotare uno slot del gruppo toglie dal gruppo chi c'era; gli altri salgono.
+//! - Aggiunta automatica (opzione globale): chi va in onda e non è in nessun gruppo entra nel
+//!   PRIMO gruppo, in ordine di arrivo. Chi è stato tolto a mano non viene riaggiunto.
+//! - Precedenza (elenco globale di nomi): chi è nell'elenco entra davanti a chi ha meno
+//!   precedenza (o non è nell'elenco). Gli spostamenti manuali non vengono annullati.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -49,11 +53,28 @@ pub struct Member {
 pub struct Groups {
     pub configs: Vec<GroupConfig>,
     pub members: HashMap<u32, Vec<Member>>,
+    /// tolti a mano da un gruppo: l'aggiunta automatica non li riaggiunge
+    excluded: HashSet<String>,
+}
+
+fn norm(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// Posizione nell'elenco di precedenza (più bassa = più importante); fuori elenco = usize::MAX.
+/// "Mario" vale anche per "Mario Rossi" (inizio di parola); maiuscole e spazi non contano.
+pub fn rank(priority: &[String], label: &str) -> usize {
+    let l = norm(label);
+    priority
+        .iter()
+        .map(|p| norm(p))
+        .position(|p| !p.is_empty() && (l == p || l.starts_with(&format!("{p} "))))
+        .unwrap_or(usize::MAX)
 }
 
 impl Groups {
     pub fn from_configs(configs: Vec<GroupConfig>) -> Self {
-        Self { configs, members: HashMap::new() }
+        Self { configs, members: HashMap::new(), excluded: HashSet::new() }
     }
 
     pub fn group_of_slot(&self, slot: u32) -> Option<u32> {
@@ -95,6 +116,7 @@ impl Groups {
     /// Manda `track` sullo slot `slot` del gruppo.
     pub fn place(&mut self, gid: u32, slot: u32, track: &str, label: &str, is_live: &dyn Fn(&str) -> bool) {
         let Some(pos) = self.cfg(gid).and_then(|g| g.slots.iter().position(|s| *s == slot)) else { return };
+        self.excluded.remove(track);
         // una persona sta in un solo gruppo
         for (other, m) in self.members.iter_mut() {
             if *other != gid {
@@ -128,6 +150,44 @@ impl Groups {
         if let Some(m) = self.members.get_mut(&gid) {
             m.retain(|m| m.track != track);
         }
+        self.excluded.insert(track.into());
+    }
+
+    fn is_member(&self, track: &str) -> bool {
+        self.members.values().flatten().any(|m| m.track == track)
+    }
+
+    /// Inserisce davanti al primo membro con meno precedenza; altrimenti in fondo.
+    fn insert_ranked(&mut self, gid: u32, m: Member, priority: &[String]) {
+        let r = rank(priority, &m.label);
+        let members = self.members.entry(gid).or_default();
+        match members.iter().position(|x| rank(priority, &x.label) > r) {
+            Some(i) => members.insert(i, m),
+            None => members.push(m),
+        }
+    }
+
+    /// Aggiunta automatica nel gruppo gid (il primo): live = webcam in onda (id, nome) in ordine di arrivo.
+    pub fn auto_add(&mut self, gid: u32, live: &[(String, String)], priority: &[String]) -> bool {
+        if self.cfg(gid).is_none() {
+            return false;
+        }
+        let mut changed = false;
+        for (id, label) in live {
+            if self.is_member(id) || self.excluded.contains(id) {
+                continue;
+            }
+            self.insert_ranked(gid, Member { track: id.clone(), label: label.clone() }, priority);
+            changed = true;
+        }
+        changed
+    }
+
+    /// Elenco di precedenza cambiato: riordina i membri una volta (ordinamento stabile).
+    pub fn sort_by_priority(&mut self, priority: &[String]) {
+        for m in self.members.values_mut() {
+            m.sort_by_key(|x| rank(priority, &x.label));
+        }
     }
 
     /// Svuota uno slot del gruppo: chi c'era esce dal gruppo, gli altri salgono.
@@ -135,13 +195,14 @@ impl Groups {
         let Some(pos) = self.cfg(gid).and_then(|g| g.slots.iter().position(|s| *s == slot)) else { return };
         let live = self.live_idx(gid, is_live);
         if let (Some(&k), Some(m)) = (live.get(pos), self.members.get_mut(&gid)) {
-            m.remove(k);
+            let gone = m.remove(k);
+            self.excluded.insert(gone.track);
         }
     }
 
     /// Ospite riconnesso (nuova traccia, stesso nome): riprende il suo posto.
     /// `live` = tracce video connesse (id, nome). Ritorna true se qualcosa è cambiato.
-    pub fn rebind(&mut self, live: &[(String, String)]) -> bool {
+    pub fn rebind(&mut self, live: &[(String, String)], priority: &[String]) -> bool {
         let used: Vec<String> = self.members.values().flatten().map(|m| m.track.clone()).collect();
         let is_live = |t: &str| live.iter().any(|(id, _)| id == t);
         let mut taken: Vec<String> = vec![];
@@ -159,20 +220,35 @@ impl Groups {
                 changed = true;
             }
         }
-        // aggiorna i nomi dei membri connessi (il nome arriva dal DOM qualche secondo dopo)
-        for m in self.members.values_mut().flatten() {
-            if let Some((_, label)) = live.iter().find(|(id, _)| *id == m.track) {
-                if m.label != *label {
-                    m.label = label.clone();
-                    changed = true;
+        // aggiorna i nomi dei membri connessi (possono arrivare dopo la traccia);
+        // se così cambia la precedenza, il membro viene riposizionato
+        let mut moved: Vec<(u32, Member)> = vec![];
+        for (gid, members) in self.members.iter_mut() {
+            let mut i = 0;
+            while i < members.len() {
+                let m = &mut members[i];
+                if let Some((_, label)) = live.iter().find(|(id, _)| *id == m.track) {
+                    if m.label != *label {
+                        let before = rank(priority, &m.label);
+                        m.label = label.clone();
+                        changed = true;
+                        if rank(priority, label) != before {
+                            moved.push((*gid, members.remove(i)));
+                            continue;
+                        }
+                    }
                 }
+                i += 1;
             }
+        }
+        for (gid, m) in moved {
+            self.insert_ranked(gid, m, priority);
         }
         changed
     }
 
     /// Crea (id 0) o aggiorna un gruppo. Uno slot appartiene al massimo a un gruppo.
-    pub fn save(&mut self, mut g: GroupConfig, slot_count: u32) -> Result<u32, String> {
+    pub fn save(&mut self, mut g: GroupConfig, valid: &[u32]) -> Result<u32, String> {
         let name = g.name.trim().to_string();
         if name.is_empty() {
             return Err("il gruppo deve avere un nome".into());
@@ -183,7 +259,7 @@ impl Groups {
         }
         let mut seen = vec![];
         for s in &g.slots {
-            if !(1..=slot_count).contains(s) || seen.contains(s) {
+            if !valid.contains(s) || seen.contains(s) {
                 return Err(format!("slot {s} non valido"));
             }
             seen.push(*s);
@@ -204,6 +280,19 @@ impl Groups {
             Ok(c.id)
         } else {
             Err("gruppo inesistente".into())
+        }
+    }
+
+    /// Uscita eliminata: esce dai gruppi; un gruppo rimasto senza uscite viene eliminato.
+    pub fn remove_slot(&mut self, slot: u32) {
+        for g in self.configs.iter_mut() {
+            g.slots.retain(|s| *s != slot);
+            let n = g.slots.len() as u32;
+            g.actions.retain(|k, _| *k <= n);
+        }
+        let empty: Vec<u32> = self.configs.iter().filter(|g| g.slots.is_empty()).map(|g| g.id).collect();
+        for id in empty {
+            self.delete(id);
         }
     }
 
@@ -253,7 +342,7 @@ mod tests {
 
     fn grp(slots: &[u32]) -> Groups {
         let mut g = Groups::default();
-        g.save(GroupConfig { id: 0, name: "Panel".into(), slots: slots.to_vec(), actions: Default::default(), extra_scenes: vec![] }, 8)
+        g.save(GroupConfig { id: 0, name: "Panel".into(), slots: slots.to_vec(), actions: Default::default(), extra_scenes: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8])
             .unwrap();
         g
     }
@@ -317,24 +406,88 @@ mod tests {
         g.place(1, 1, "a", "Mario", ALL);
         g.place(1, 2, "b", "Giulia", ALL);
         let live = vec![("b".to_string(), "Giulia".to_string()), ("a2".to_string(), "Mario".to_string())];
-        assert!(g.rebind(&live));
+        assert!(g.rebind(&live, &[]));
         assert_eq!(order(&g), vec!["a2", "b"]);
     }
 
     #[test]
     fn uno_slot_in_un_solo_gruppo() {
         let mut g = grp(&[1, 2]);
-        let r = g.save(GroupConfig { id: 0, name: "Altro".into(), slots: vec![2, 3], actions: Default::default(), extra_scenes: vec![] }, 8);
+        let r = g.save(GroupConfig { id: 0, name: "Altro".into(), slots: vec![2, 3], actions: Default::default(), extra_scenes: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(r.unwrap_err().contains("già nel gruppo"));
     }
 
     #[test]
     fn una_persona_in_un_solo_gruppo() {
         let mut g = grp(&[1]);
-        g.save(GroupConfig { id: 0, name: "B".into(), slots: vec![2], actions: Default::default(), extra_scenes: vec![] }, 8).unwrap();
+        g.save(GroupConfig { id: 0, name: "B".into(), slots: vec![2], actions: Default::default(), extra_scenes: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
         g.place(1, 1, "a", "A", ALL);
         g.place(2, 2, "a", "A", ALL);
         assert!(g.members[&1].is_empty());
         assert_eq!(g.members[&2].len(), 1);
+    }
+
+    #[test]
+    fn uscita_eliminata_esce_dal_gruppo_e_gruppo_vuoto_sparisce() {
+        let mut g = grp(&[1, 2]);
+        g.place(1, 1, "a", "A", ALL);
+        g.remove_slot(1);
+        assert_eq!(g.configs[0].slots, vec![2]);
+        assert_eq!(g.fill(ALL), vec![(2, Some("a".into()))]);
+        g.remove_slot(2);
+        assert!(g.configs.is_empty());
+    }
+
+    fn live(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+    }
+
+    #[test]
+    fn aggiunta_automatica_in_ordine_di_arrivo() {
+        let mut g = grp(&[1, 2]);
+        assert!(g.auto_add(1, &live(&[("a", "Anna"), ("b", "Bruno"), ("c", "Carla")]), &[]));
+        assert_eq!(order(&g), vec!["a", "b", "c"]);
+        assert_eq!(g.view(ALL)[0]["members"][2]["place"], "standby");
+        assert!(!g.auto_add(1, &live(&[("a", "Anna"), ("b", "Bruno"), ("c", "Carla")]), &[]));
+    }
+
+    #[test]
+    fn precedenza_passa_davanti_e_manda_in_attesa_l_ultimo() {
+        let mut g = grp(&[1, 2]);
+        let p = vec!["Mario".to_string(), "Giulia".to_string()];
+        g.auto_add(1, &live(&[("a", "Anna"), ("b", "Bruno")]), &p);
+        g.auto_add(1, &live(&[("g", "Giulia Bianchi")]), &p);
+        g.auto_add(1, &live(&[("m", "mario  rossi")]), &p);
+        assert_eq!(order(&g), vec!["m", "g", "a", "b"]);
+        assert_eq!(g.fill(ALL), vec![(1, Some("m".into())), (2, Some("g".into()))]);
+    }
+
+    #[test]
+    fn tolto_a_mano_non_viene_riaggiunto() {
+        let mut g = grp(&[1, 2]);
+        g.auto_add(1, &live(&[("a", "Anna"), ("b", "Bruno")]), &[]);
+        g.clear_slot(1, 1, ALL);
+        g.remove(1, "b");
+        assert!(!g.auto_add(1, &live(&[("a", "Anna"), ("b", "Bruno")]), &[]));
+        g.place(1, 1, "a", "Anna", ALL);
+        assert_eq!(order(&g), vec!["a"]);
+    }
+
+    #[test]
+    fn nome_arrivato_dopo_riposiziona_per_precedenza() {
+        let mut g = grp(&[1, 2]);
+        let p = vec!["Mario".to_string()];
+        g.auto_add(1, &live(&[("a", "Anna"), ("x", "Ospite 3")]), &p);
+        assert_eq!(order(&g), vec!["a", "x"]);
+        g.rebind(&live(&[("a", "Anna"), ("x", "Mario")]), &p);
+        assert_eq!(order(&g), vec!["x", "a"]);
+    }
+
+    #[test]
+    fn elenco_cambiato_riordina_una_volta() {
+        let mut g = grp(&[1, 2, 3]);
+        g.auto_add(1, &live(&[("a", "Anna"), ("b", "Bruno"), ("c", "Carla")]), &[]);
+        g.sort_by_priority(&["Carla".to_string(), "Anna".to_string()]);
+        assert_eq!(order(&g), vec!["c", "a", "b"]);
     }
 }

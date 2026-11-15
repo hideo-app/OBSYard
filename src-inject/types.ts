@@ -24,6 +24,22 @@ export interface Settings {
   codec: "H264" | "VP8" | "VP9" | "AV1";
   maxBitrateKbps: number;
   maxFps: number;
+  /** layout personalizzato di StreamYard con tutti i riquadri a piena altezza */
+  fullResLayout: string;
+  /** chi va in onda entra da solo nel primo gruppo, in ordine di arrivo */
+  autoAdd: boolean;
+  /** cosa mostrano le uscite senza video (vuote, fuori onda, camera spenta) */
+  emptyBg: "transparent" | "black";
+  /** nomi con precedenza, in ordine: entrano davanti agli altri */
+  priority: string[];
+}
+
+/** Uscita OBS (Fonte browser http://127.0.0.1:7878/slot/{id}); l'ordine è quello dell'elenco */
+export interface Output {
+  id: number;
+  name: string;
+  /** eccezione allo sfondo globale senza video; null = come Settings.emptyBg */
+  bg: "transparent" | "black" | null;
 }
 
 export interface GroupAction {
@@ -68,9 +84,13 @@ export interface AppState {
   port: number;
   publisherReady: boolean;
   tracks: TrackInfo[];
+  outputs: Output[];
   slots: Record<string, SlotAssign>;
   viewers: Record<string, number>;
   settings: Settings;
   groups: GroupView[];
   obs: ObsConfig;
+  /** toggle "ospiti a piena risoluzione": on = richiesto; status = cosa vede lo studio */
+  /** status: off | on | missing | manual | created (ricarica lo studio) | error:<motivo> | "" (in corso) */
+  fullRes: { on: boolean; status: string; layout: string };
 }

@@ -2,20 +2,22 @@ import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  AppState, GroupConfig, GroupView, ObsConfig, Settings, SlotAssign, TrackInfo,
+  AppState, GroupConfig, GroupView, ObsConfig, Output, Settings, SlotAssign, TrackInfo,
 } from "../src-inject/types";
 
-export type { AppState, GroupConfig, GroupView, ObsConfig, Settings, SlotAssign, TrackInfo };
+export type { AppState, GroupConfig, GroupView, ObsConfig, Output, Settings, SlotAssign, TrackInfo };
 
 export const state = reactive<AppState>({
   port: 7878,
   publisherReady: false,
   tracks: [],
+  outputs: [],
   slots: {},
   viewers: {},
-  settings: { codec: "H264", maxBitrateKbps: 12000, maxFps: 60 },
+  settings: { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, emptyBg: "transparent", priority: [] },
   groups: [],
   obs: { url: "ws://127.0.0.1:4455", password: "", drive: false },
+  fullRes: { on: false, status: "off", layout: "OBSYard" },
 });
 
 /** miniature: id traccia -> data URL jpeg (aggiornate ogni ~2s dallo studio) */
@@ -35,26 +37,37 @@ export const membershipOf = (track: string) => {
   return null;
 };
 
+export const outputById = (id: number | string) => state.outputs.find((o) => o.id === Number(id));
+export const outputName = (id: number | string) => outputById(id)?.name ?? `Slot ${id}`;
+
 /**
- * Ordine della colonna slot: ogni gruppo è un blocco con i suoi slot in ordine di
- * riempimento, messo dove sta il suo primo slot; gli altri slot restano al loro posto.
+ * Ordine della colonna uscite (come guestroom): l'ordine delle uscite, con ogni gruppo come
+ * blocco dei suoi slot in ordine di riempimento, messo dove sta la sua prima uscita.
  */
 export const slotLayout = computed(() => {
   const out: ({ kind: "slot"; n: number } | { kind: "group"; group: GroupView })[] = [];
   const placed = new Set<number>();
-  for (const key of Object.keys(state.slots)) {
-    const n = Number(key);
-    const g = groupOfSlot(n);
-    if (!g) out.push({ kind: "slot", n });
-    else if (!placed.has(g.id) && g.slots[0] === n) {
+  for (const o of state.outputs) {
+    const g = groupOfSlot(o.id);
+    if (!g) out.push({ kind: "slot", n: o.id });
+    else if (!placed.has(g.id)) {
       placed.add(g.id);
       out.push({ kind: "group", group: g });
     }
   }
-  // gruppi il cui primo slot non è nell'elenco (non dovrebbe succedere)
-  for (const g of state.groups) if (!placed.has(g.id)) out.push({ kind: "group", group: g });
   return out;
 });
+
+/** il primo gruppo a schermo: quello in cui entrano i partecipanti con l'aggiunta automatica */
+export const firstGroupId = computed(() => {
+  for (const it of slotLayout.value) if (it.kind === "group") return it.group.id;
+  return null;
+});
+
+/** uscite nell'ordine in cui compaiono a schermo (gruppi compresi): serve a numerarle 1…N */
+export const outputsOnScreen = computed(() =>
+  slotLayout.value.flatMap((it) => (it.kind === "slot" ? [it.n] : it.group.slots)),
+);
 
 export const slotUrl = (n: number | string) => `http://127.0.0.1:${state.port}/slot/${n}`;
 
@@ -81,6 +94,18 @@ export const saveGroup = (group: GroupConfig) => invoke<number>("group_save", { 
 export const deleteGroup = (id: number) => invoke("group_delete", { id });
 export const removeFromGroup = (id: number, track: string) => invoke("group_remove", { id, track });
 export const setObs = (obs: ObsConfig) => invoke("set_obs", { obs });
+export const setFullRes = (on: boolean) => invoke("set_full_res", { on });
+
+export const addOutput = (name?: string) => invoke<number>("output_add", { name: name ?? null });
+export const updateOutput = (id: number, patch: { name?: string; bg?: "default" | "transparent" | "black" }) =>
+  invoke("output_update", { id, name: patch.name ?? null, bg: patch.bg ?? null });
+/** sfondo effettivo di un'uscita senza video (eccezione o impostazione globale) */
+export const outputBg = (id: number | string) => outputById(id)?.bg ?? state.settings.emptyBg;
+export const moveOutput = (id: number, delta: -1 | 1) => invoke("output_move", { id, delta });
+export const deleteOutput = (id: number) => invoke("output_delete", { id });
+/** prossimo nome libero "Cam N" (precompilato nel modulo Aggiungi uscita) */
+export const nextOutputName = () =>
+  `Cam ${Math.max(0, ...state.outputs.map((o) => Number(/^Cam (\d+)$/.exec(o.name)?.[1] ?? 0))) + 1}`;
 
 export const studio = (action: "show" | "reload" | "devtools" | "navigate", url?: string) =>
   invoke("studio_action", { action, url });

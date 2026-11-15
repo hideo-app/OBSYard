@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { state, thumbs, assign, groupOfSlot, membershipOf, type TrackInfo } from "../store";
+import { state, thumbs, assign, groupOfSlot, membershipOf, outputsOnScreen, outputName, type TrackInfo } from "../store";
 
 const props = defineProps<{ track: TrackInfo }>();
 
@@ -12,7 +12,7 @@ const onSlots = computed(() =>
 );
 
 const toggle = (n: string) => {
-  const cur = state.slots[n];
+  const cur = state.slots[n] ?? { video: null, audio: "auto" };
   const on = cur.video === props.track.id;
   assign(n, { video: on ? null : props.track.id, audio: cur.audio ?? "auto" });
 };
@@ -21,7 +21,7 @@ const membership = computed(() => membershipOf(props.track.id));
 const placeLabel = { on: "in onda", standby: "in attesa", away: "assente" } as const;
 const slotTitle = (n: string) => {
   const g = groupOfSlot(n);
-  return g ? `Manda allo slot ${n} (gruppo ${g.name})` : `Manda allo slot ${n}`;
+  return g ? `Manda a ${outputName(n)} (gruppo ${g.name})` : `Manda a ${outputName(n)}`;
 };
 </script>
 
@@ -42,13 +42,13 @@ const slotTitle = (n: string) => {
     </div>
     <div class="slots">
       <button
-        v-for="(_, n) in state.slots"
+        v-for="(n, i) in outputsOnScreen"
         :key="n"
         class="slotbtn"
         :class="{ on: onSlots.includes(String(n)), grp: groupOfSlot(n) }"
         :title="slotTitle(String(n))"
         @click="toggle(String(n))"
-      >{{ n }}</button>
+      >{{ i + 1 }}</button>
     </div>
   </article>
 </template>

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-full-res"
+description = "Enables the set_full_res command without any pre-configured scope."
+commands.allow = ["set_full_res"]
+
+[[permission]]
+identifier = "deny-set-full-res"
+description = "Denies the set_full_res command without any pre-configured scope."
+commands.deny = ["set_full_res"]

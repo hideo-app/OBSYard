@@ -74,7 +74,10 @@
           await pc?.addIceCandidate(m.candidate).catch(() => {});
           break;
         case "state":
+          // senza video: niente ultimo fotogramma, ma lo sfondo scelto in OBSYard
+          // (?bg= nell'URL della fonte ha la precedenza)
           video.classList.toggle("on", !!m.video);
+          if (!qs.get("bg")) document.body.style.background = m.bg === "black" ? "#000" : "transparent";
           break;
         case "reset":
           closePc();

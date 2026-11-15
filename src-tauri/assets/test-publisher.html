@@ -50,6 +50,7 @@ async function guest(name, color, freq) {
   b.onicecandidate = e => e.candidate && a.addIceCandidate(e.candidate);
   b.ontrack = e => { tile.querySelector("video").srcObject = e.streams[0]; };
   src.getTracks().forEach(t => a.addTrack(t, src));
+  (window.senders ??= {})[name] = a; // per i test: spegnere la "camera" di un ospite
   await a.setLocalDescription(await a.createOffer());
   await b.setRemoteDescription(a.localDescription);
   await b.setLocalDescription(await b.createAnswer());
@@ -57,6 +58,27 @@ async function guest(name, color, freq) {
 }
 
 guests.forEach(([n, c], i) => guest(n, c, 330 + i * 110));
+
+// Finti pulsanti layout come quelli di StreamYard (aria-pressed), per provare "Ospiti a piena risoluzione".
+// ?layout=0 li toglie per provare il caso "layout non trovato".
+if (new URLSearchParams(location.search).get("layout") !== "0") {
+  const bar = document.createElement("div");
+  bar.className = "layouts";
+  bar.style.cssText = "width:100%;display:flex;gap:6px";
+  for (const [label, pressed] of [["Layout sottile.", true], ["Layout di gruppo.", false], ["OBSYard", false]]) {
+    const b = Object.assign(document.createElement("button"), { textContent: label });
+    b.setAttribute("aria-label", label);
+    b.setAttribute("aria-pressed", String(pressed));
+    b.onclick = () => bar.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    if (label === "OBSYard") {
+      // come in StreamYard: i layout personalizzati stanno in un blocco annidato a parte
+      let box = b;
+      for (let i = 0; i < 4; i++) { const d = document.createElement("div"); d.appendChild(box); box = d; }
+      bar.appendChild(box);
+    } else bar.appendChild(b);
+  }
+  document.body.prepend(bar);
+}
 </script>
 </body>
 </html>

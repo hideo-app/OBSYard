@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { removeFromGroup, type GroupView } from "../store";
+import { removeFromGroup, state, firstGroupId, type GroupView } from "../store";
 import { obs } from "../obs";
 import SlotRow from "./SlotRow.vue";
 
@@ -28,6 +28,7 @@ const status = computed(() => {
     <header class="ghead">
       <strong>{{ group.name }}</strong>
       <span class="gcount" title="Partecipanti che contano per le azioni OBS">{{ group.count }}/{{ group.slots.length }}</span>
+      <span v-if="state.settings.autoAdd && firstGroupId === group.id" class="gpill auto" title="Chi va in onda entra qui in automatico">auto</span>
       <span v-if="status" class="gpill" :class="status.cls" :title="status.title">{{ status.text }}</span>
       <span class="spacer" />
       <button class="icon" title="Modifica gruppo" @click="$emit('edit', group)">⚙</button>

@@ -76,6 +76,16 @@ fn pub_signal(hub: State<SharedHub>, viewer_id: u64, msg: Value) {
 }
 
 #[tauri::command]
+fn pub_fullres(hub: State<SharedHub>, status: String) {
+    hub.lock().unwrap().full_res_report(status);
+}
+
+#[tauri::command]
+fn set_full_res(hub: State<SharedHub>, on: bool) {
+    hub.lock().unwrap().set_full_res(on);
+}
+
+#[tauri::command]
 fn pub_thumbs(hub: State<SharedHub>, thumbs: Value) {
     hub.lock().unwrap().emit_thumbs(thumbs);
 }
@@ -110,6 +120,26 @@ fn group_delete(hub: State<SharedHub>, id: u32) {
 #[tauri::command]
 fn group_remove(hub: State<SharedHub>, id: u32, track: String) {
     hub.lock().unwrap().group_remove(id, &track);
+}
+
+#[tauri::command]
+fn output_add(hub: State<SharedHub>, name: Option<String>) -> u32 {
+    hub.lock().unwrap().output_add(name)
+}
+
+#[tauri::command]
+fn output_update(hub: State<SharedHub>, id: u32, name: Option<String>, bg: Option<String>) -> Result<(), String> {
+    hub.lock().unwrap().output_update(id, name, bg)
+}
+
+#[tauri::command]
+fn output_move(hub: State<SharedHub>, id: u32, delta: i32) {
+    hub.lock().unwrap().output_move(id, delta);
+}
+
+#[tauri::command]
+fn output_delete(hub: State<SharedHub>, id: u32) {
+    hub.lock().unwrap().output_delete(id);
 }
 
 #[tauri::command]
@@ -152,9 +182,10 @@ pub fn run() {
     tauri::Builder::default()
         .manage(hub.clone())
         .invoke_handler(tauri::generate_handler![
-            pub_ready, pub_tracks, pub_signal, pub_thumbs,
+            pub_ready, pub_tracks, pub_signal, pub_thumbs, pub_fullres, set_full_res,
             get_state, assign, set_settings, set_thumbs, studio_action,
-            group_save, group_delete, group_remove, set_obs
+            group_save, group_delete, group_remove, set_obs,
+            output_add, output_update, output_move, output_delete
         ])
         .setup(move |app| {
             {

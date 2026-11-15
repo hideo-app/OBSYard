@@ -56,7 +56,7 @@ code { background: #222634; padding: 1px 5px; border-radius: 4px; font-size: 12p
 .slotbtn { width: 28px; height: 28px; padding: 0; font-size: 12px; }
 .slotbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
 
-.slot { display: grid; grid-template-columns: 26px 64px 1fr auto auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; margin-bottom: 6px; }
+.slot { display: grid; grid-template-columns: 18px 64px 1fr auto auto auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; margin-bottom: 6px; }
 .slot.live { border-color: #5a2a24; }
 .num { font-weight: 700; text-align: center; color: var(--muted); }
 .slot.live .num { color: var(--accent); }
@@ -116,3 +116,38 @@ button.icon { padding: 2px 8px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button.primary:disabled { opacity: .5; }
 button.danger { color: var(--accent); background: transparent; }
+
+/* ---------- uscite dinamiche ---------- */
+.oname { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.oname strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.rename { padding: 2px 6px; font-size: 13px; width: 100%; }
+.tag { font-size: 10px; padding: 0 5px; border-radius: 4px; background: #000; border: 1px solid var(--line); color: var(--muted); }
+.mini.black { background: #000; outline: 1px solid var(--line); }
+.omenu-wrap { position: relative; }
+.omenu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; display: grid; min-width: 150px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.omenu button { border: 0; background: transparent; text-align: left; padding: 6px 10px; font-size: 13px; }
+.omenu button:hover { background: #222634; }
+.omenu .danger { color: var(--accent); }
+.addrow { display: flex; gap: 8px; }
+.addrow .addgroup { flex: 1; }
+.addgroup.primary { border-style: solid; background: var(--accent); color: #fff; }
+.addform { display: flex; gap: 8px; margin-top: 2px; }
+.addform input { flex: 1; }
+.outbtn { font-size: 12px; padding: 4px 10px; }
+.outbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.outbtn:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ---------- partecipanti ---------- */
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.check input { accent-color: var(--accent); }
+.prio { margin-top: 10px; }
+.prio textarea { width: 100%; resize: vertical; font: inherit; color: var(--text); background: #222634; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+.warnline { color: var(--warn); }
+.gpill.auto { background: #2a2140; color: #a48df0; }
+
+/* ---------- sfondo senza video ---------- */
+.uhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.bgpick { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.bgpick select { padding: 3px 6px; font-size: 12px; }
+.msep { font-size: 11px; color: var(--muted); padding: 6px 10px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
+.msep:empty { padding: 0; margin-bottom: 4px; }
