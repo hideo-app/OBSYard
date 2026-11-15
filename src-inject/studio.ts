@@ -963,7 +963,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     growing?: boolean;
     empty?: boolean;
     aTrack?: MediaStreamTrack;
-    aNodes?: { src: AudioNode; proc: ScriptProcessorNode; mute: GainNode; el: HTMLAudioElement };
+    aNodes?: { src: AudioNode; proc: AudioWorkletNode | ScriptProcessorNode; mute: GainNode; el: HTMLAudioElement };
   }
   const natives = new Map<number, NativeOut>();
   const nat = (slot: number) => {
@@ -1078,10 +1078,63 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   };
 
   let nvCtx: AudioContext | null = null;
+  /**
+   * Cattura audio su un AudioWorklet: gira sul thread audio, quindi non perde blocchi quando la
+   * pagina (Discord) tiene occupato il thread principale (con ScriptProcessorNode si sentivano
+   * scoppiettii: ~0,6% dell'audio mancava). Blocchi da 20 ms, stereo interleaved, inviati alla
+   * pagina che li scrive nell'anello: i messaggi si accodano, non si perdono.
+   */
+  const NV_TAP = `registerProcessor("obsyard-tap", class extends AudioWorkletProcessor {
+    constructor() { super(); this.b = new Float32Array(1920); this.n = 0; }
+    process(inputs) {
+      const i = inputs[0];
+      if (!i || !i.length) return true;
+      const L = i[0], R = i[1] || i[0];
+      for (let k = 0; k < L.length; k++) {
+        this.b[this.n * 2] = L[k];
+        this.b[this.n * 2 + 1] = R[k];
+        if (++this.n === 960) {
+          this.port.postMessage(this.b, [this.b.buffer]);
+          this.b = new Float32Array(1920);
+          this.n = 0;
+        }
+      }
+      return true;
+    }
+  });`;
+  /** il modulo del worklet, caricato una volta per contesto (null: la pagina non lo permette) */
+  let nvTapReady: Promise<boolean> | null = null;
+  const nvTap = (ctx: AudioContext) =>
+    (nvTapReady ??= ctx.audioWorklet
+      .addModule(URL.createObjectURL(new Blob([NV_TAP], { type: "text/javascript" })))
+      .then(() => true)
+      .catch((e) => {
+        log("plugin OBS: AudioWorklet non disponibile, uso ScriptProcessor", e);
+        return false;
+      }));
+
+  /** scrive campioni stereo interleaved nell'anello dell'uscita */
+  const nvRing = (n: NativeOut, data: Float32Array, frames: number) => {
+    const a = n.audio;
+    if (!a) return;
+    const dv = new DataView(a.buf);
+    const cap = dv.getUint32(4, true);
+    if (!cap) return;
+    const ring = new Float32Array(a.buf, 64, cap * 2);
+    let w = Number(dv.getBigUint64(8, true));
+    for (let i = 0; i < frames; i++, w++) {
+      const p = (w % cap) * 2;
+      ring[p] = data[i * 2];
+      ring[p + 1] = data[i * 2 + 1];
+    }
+    dv.setBigUint64(8, BigInt(w), true);
+  };
+
   const nvStopAudio = (n: NativeOut) => {
     const a = n.aNodes;
     if (a) {
-      a.proc.onaudioprocess = null;
+      if (a.proc instanceof AudioWorkletNode) a.proc.port.onmessage = null;
+      else a.proc.onaudioprocess = null;
       a.src.disconnect();
       a.proc.disconnect();
       a.mute.disconnect();
@@ -1089,39 +1142,40 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     }
     n.aNodes = n.aTrack = undefined;
   };
-  const nvStartAudio = (n: NativeOut, track: MediaStreamTrack) => {
+  const nvStartAudio = async (n: NativeOut, track: MediaStreamTrack) => {
+    n.aTrack = track; // subito: un secondo nativeRefresh non la riavvia mentre il modulo si carica
     nvCtx ??= new AudioContext({ sampleRate: 48000 });
-    void nvCtx.resume().catch(() => {});
+    const ctx = nvCtx;
+    void ctx.resume().catch(() => {});
+    const worklet = await nvTap(ctx);
+    if (n.aTrack !== track) return; // cambiata nel frattempo
     // Chromium: l'audio WebRTC remoto arriva a Web Audio solo se un elemento lo riproduce (muto)
     const el = new Audio();
     el.muted = true;
     el.srcObject = new MediaStream([track]);
     void el.play().catch(() => {});
-    const src = nvCtx.createMediaStreamSource(new MediaStream([track]));
-    const proc = nvCtx.createScriptProcessor(1024, 2, 2);
-    const mute = nvCtx.createGain();
-    mute.gain.value = 0; // il processore gira solo se collegato all'uscita: in silenzio
-    proc.onaudioprocess = (ev) => {
-      const a = n.audio;
-      if (!a) return;
-      const dv = new DataView(a.buf);
-      const cap = dv.getUint32(4, true);
-      if (!cap) return;
-      const ring = new Float32Array(a.buf, 64, cap * 2);
-      const L = ev.inputBuffer.getChannelData(0);
-      const R = ev.inputBuffer.numberOfChannels > 1 ? ev.inputBuffer.getChannelData(1) : L;
-      let w = Number(dv.getBigUint64(8, true));
-      for (let i = 0; i < L.length; i++, w++) {
-        const p = (w % cap) * 2;
-        ring[p] = L[i];
-        ring[p + 1] = R[i];
-      }
-      dv.setBigUint64(8, BigInt(w), true);
-    };
+    const src = ctx.createMediaStreamSource(new MediaStream([track]));
+    const mute = ctx.createGain();
+    mute.gain.value = 0; // il nodo gira solo se collegato all'uscita: in silenzio
+    let proc: AudioWorkletNode | ScriptProcessorNode;
+    if (worklet) {
+      const node = new AudioWorkletNode(ctx, "obsyard-tap", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: "explicit" });
+      node.port.onmessage = (e) => nvRing(n, e.data as Float32Array, (e.data as Float32Array).length / 2);
+      proc = node;
+    } else {
+      const sp = ctx.createScriptProcessor(1024, 2, 2);
+      const buf = new Float32Array(2048);
+      sp.onaudioprocess = (ev) => {
+        const L = ev.inputBuffer.getChannelData(0);
+        const R = ev.inputBuffer.numberOfChannels > 1 ? ev.inputBuffer.getChannelData(1) : L;
+        for (let i = 0; i < L.length; i++) ((buf[i * 2] = L[i]), (buf[i * 2 + 1] = R[i]));
+        nvRing(n, buf, L.length);
+      };
+      proc = sp;
+    }
     src.connect(proc);
     proc.connect(mute);
-    mute.connect(nvCtx.destination);
-    n.aTrack = track;
+    mute.connect(ctx.destination);
     n.aNodes = { src, proc, mute, el };
   };
 
@@ -1139,7 +1193,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     const wantA = n.audio && n.audioOn !== false && audio ? audio : null;
     if (wantA !== (n.aTrack ?? null)) {
       nvStopAudio(n);
-      if (wantA) nvStartAudio(n, wantA);
+      if (wantA) void nvStartAudio(n, wantA);
     }
   }
 
