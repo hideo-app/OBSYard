@@ -2,7 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
   state, init, videoTracks, audioTracks, slotLayout, setSettings, setObs, studio, addOutput, nextOutputName, setFullRes,
-  selected, outputsOnScreen, sendTo, trackById, outputName, drag, applyPriority,
+  selected, outputsOnScreen, sendTo, trackById, outputName, drag, applyPriority, obsPluginStatus, obsPluginInstall,
+  type PluginStatus,
   type Settings, type GroupView, type ObsConfig, type TrackInfo,
 } from "./store";
 import { obs, startObs, obsWanted, createLtInputs } from "./obs";
@@ -155,9 +156,36 @@ const onKey = (e: KeyboardEvent) => {
 document.addEventListener("keydown", onKey);
 onBeforeUnmount(() => document.removeEventListener("keydown", onKey));
 
+// ---------- plugin OBS nativo ----------
+const plugin = ref<PluginStatus | null>(null);
+const pluginBusy = ref(false);
+const pluginNote = ref("");
+const refreshPlugin = async () => (plugin.value = await obsPluginStatus().catch(() => null));
+onMounted(refreshPlugin);
+const installPlugin = async () => {
+  pluginBusy.value = true;
+  pluginNote.value = "";
+  try {
+    plugin.value = await obsPluginInstall();
+    pluginNote.value = "Installato: riavvia OBS per caricarlo.";
+  } catch (e) {
+    pluginNote.value = String(e);
+  } finally {
+    pluginBusy.value = false;
+  }
+};
+const pluginLabel = computed(() => {
+  const p = plugin.value;
+  if (!p) return "";
+  if (!p.available) return "non incluso";
+  if (!p.installed) return "non installato";
+  return p.current ? "installato" : "da aggiornare";
+});
+const nativeCount = computed(() => Object.keys(state.native).length);
+
 // ---------- sezioni richiudibili (ricordate) ----------
 const OPEN_KEY = "obsyard.sections";
-const open = reactive<Record<string, boolean>>({ lt: false, people: false, quality: false, obs: false });
+const open = reactive<Record<string, boolean>>({ lt: false, people: false, quality: false, obs: false, plugin: false });
 try {
   Object.assign(open, JSON.parse(localStorage.getItem(OPEN_KEY) ?? "{}"));
 } catch { /* preferenze illeggibili: sezioni chiuse */ }
@@ -333,6 +361,27 @@ const ltModeLabel = computed(() => ({ off: "spenti", page: "sull'uscita", obs: "
           </label>
           <button type="submit">Applica</button>
         </form>
+      </details>
+
+      <details class="sec" :open="open.plugin" @toggle="toggleSection('plugin', $event); refreshPlugin()">
+        <summary>Plugin OBS <small>{{ pluginLabel }}{{ nativeCount ? ` · ${nativeCount} uscite lette` : "" }}</small></summary>
+        <p class="hint first">
+          Con il plugin, in OBS si aggiunge una sorgente <strong>OBSYard</strong> e si sceglie l'uscita dalla tendina:
+          immagine e audio arrivano come OBSYard li decodifica, <em>senza ricodifica</em>, con meno ritardo e meno lavoro per la scheda video.
+          Le Fonti browser continuano a funzionare come prima.
+        </p>
+        <p v-if="plugin && !plugin.obsFound" class="hint warnline">OBS non trovato in Programmi: il plugin si installa lo stesso, per quando ci sarà.</p>
+        <p v-if="plugin && plugin.available" class="hint">
+          <button class="mini-btn" :disabled="pluginBusy || plugin.current" @click="installPlugin">
+            {{ plugin.current ? "Installato" : plugin.installed ? "Aggiorna il plugin" : "Installa il plugin" }}
+          </button>
+          <span v-if="pluginNote"> {{ pluginNote }}</span>
+        </p>
+        <p v-else-if="plugin" class="hint warnline">Questa versione di OBSYard non include il plugin.</p>
+        <p class="hint">
+          Nella sorgente: <em>Risoluzione</em> fissa (1920×1080 di serie, l'immagine sta dentro con bande trasparenti),
+          <em>Ricevi l'audio</em> attivabile. I sottopancia, con il plugin, vanno nelle fonti Testo di OBS.
+        </p>
       </details>
 
       <details class="sec" :open="open.obs" @toggle="toggleSection('obs', $event)">

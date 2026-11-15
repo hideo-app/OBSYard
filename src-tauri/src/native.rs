@@ -50,7 +50,6 @@ mod shm {
     pub struct Mapping {
         handle: HANDLE,
         view: MEMORY_MAPPED_VIEW_ADDRESS,
-        pub size: usize,
     }
 
     unsafe impl Send for Mapping {}
@@ -64,7 +63,7 @@ mod shm {
                     let _ = CloseHandle(handle);
                     return None;
                 }
-                Some(Mapping { handle, view, size })
+                Some(Mapping { handle, view })
             }
         }
         pub fn ptr(&self) -> *mut u8 {

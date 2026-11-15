@@ -201,6 +201,10 @@ export const swapOutputs = (a: number, b: number) => invoke("swap_outputs", { a,
 export const groupMove = (id: number, track: string, delta: -1 | 1) => invoke("group_move", { id, track, delta });
 /** rimette i membri dei gruppi nell'ordine della precedenza (anche dopo spostamenti a mano) */
 export const applyPriority = () => invoke("apply_priority");
+export interface PluginStatus { available: boolean; obsFound: boolean; installed: boolean; current: boolean; path: string }
+/** plugin OBS nativo: com'è installato, e installazione (OBS va riavviato) */
+export const obsPluginStatus = () => invoke<PluginStatus>("obs_plugin_status");
+export const obsPluginInstall = () => invoke<PluginStatus>("obs_plugin_install");
 export const setLowerThird = (label: string, name: string | null, title: string) => invoke("set_lower_third", { label, name, title });
 
 export interface OutputStats {

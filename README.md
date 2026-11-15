@@ -63,6 +63,20 @@ Like guestroom.live's outputs:
 - It shows what you pick in **Without video: Transparent / Black**, at the top of the outputs.
 - Each output can differ from its ⋮ menu (*As the setting*, *Transparent* or *Black*); the exception shows as a tag next to the name.
 
+### OBS plugin (no re-encoding)
+
+Instead of a Browser Source, OBSYard has its own OBS plugin (Windows, OBS 30 or later): the **OBSYard** source.
+
+- **Install**: control room → *OBS plugin* → **Install the plugin** (then restart OBS). It goes into `%ProgramData%\obs-studio\plugins\obsyard-obs`, with no admin rights. When OBSYard is updated the section says *needs update*: close OBS and press **Update the plugin**.
+- **Use**: in OBS, **+ → OBSYard**, and pick the output by name from the list.
+- **No re-encoding**: the studio window passes the frames exactly as the browser decoded them (NV12, I420 or RGBA), and OBS converts them on the graphics card. A Browser Source instead receives video re-encoded as H.264. Quality, delay and encoder load all gain. The transfer happens in shared memory (WebView2 shared buffers → named memory → plugin), modelled on CueRider's plugin; the layouts are in `shm-proto`.
+- **Fixed resolution**: the source is a fixed-size frame, 1920×1080 by default, that does not change with whoever is on. The picture fits inside with transparent bands, or is *stretched*. There are also 1280×720, 2560×1440, 3840×2160, 1080×1920 vertical and *As the source*.
+- **Audio**: reaches OBS's mixer like any other source, captured on an AudioWorklet (48 kHz stereo). Turning off **Receive the output's audio** in the properties also stops OBSYard from capturing it.
+- **Tally**: the source tells OBSYard whether it is on program or visible, so ON AIR works as with a Browser Source. In the control room, outputs read by the plugin carry a green **plugin** tag.
+- **Only what OBS reads is captured**: an output with no OBSYard source costs nothing.
+- **Limits**: lower thirds *on the output* are drawn by the Browser Source's page, so with the plugin use the ones *in OBS Text sources*. The plugin and OBSYard must run on the same PC.
+- **Diagnostics**: `cargo run --release --example probe -- <output id> [seconds] [file.pgm]` in `obs-plugin` reads an output like the plugin and prints frames per second, format and audio.
+
 ### Sending sources to outputs
 
 Outputs are numbered 1…N in the order they appear on screen: the same number as the buttons on the cards.
