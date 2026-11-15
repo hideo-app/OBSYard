@@ -7,10 +7,14 @@
  * - agisce quando cambia il numero di partecipanti, oppure quando OBS arriva su una scena
  *   del gruppo mentre un cambio è in attesa; i passaggi manuali tra le scene del gruppo
  *   restano intatti fino al cambio successivo;
+ * - un gruppo può avere altri set di scene (es. "Cam 1/2/3" e "Reaction 1/2/3"): agisce il set
+ *   che contiene la scena di programma, quindi su "Reaction 2" un terzo partecipante porta a
+ *   "Reaction 3", mai alle scene camera; passando a una scena di un altro set, lo stato di quel
+ *   set per il numero attuale si applica una volta;
  * - non tocca mai streaming, registrazione, replay buffer o virtual cam.
  */
 import { reactive, watch } from "vue";
-import { state, type GroupView } from "./store";
+import { state, type GroupAction, type GroupView } from "./store";
 
 export const SEP = " › ";
 
@@ -25,8 +29,8 @@ export type GroupObsStatus =
   | { kind: "offline" }
   | { kind: "none" } // il gruppo non ha azioni OBS
   | { kind: "away"; scene: string } // OBS non è su una scena del gruppo
-  | { kind: "missing"; items: string[] }
-  | { kind: "synced" };
+  | { kind: "missing"; items: string[]; set?: string }
+  | { kind: "synced"; set?: string };
 
 export const obs = reactive({
   status: "idle" as "idle" | "connecting" | "connected" | "auth" | "error",
@@ -151,10 +155,26 @@ export async function refreshCatalog() {
 }
 
 // ------------------------------------------------------------- esecutore
-/** ultimo numero di partecipanti applicato per gruppo */
-const applied = new Map<number, number>();
+/** Un set di scene del gruppo: il principale (indice 0) o uno di `sets` (indice i = sets[i - 1]). */
+export interface SceneSet {
+  name: string;
+  actions: Record<string, GroupAction>;
+  extraScenes: string[];
+}
 
-export const groupScenes = (g: GroupView): Set<string> => {
+export const MAIN_SET = "Principale";
+
+/** i set di scene di un gruppo: il principale per primo */
+export const groupSets = (g: Pick<GroupView, "actions" | "extraScenes" | "sets">): SceneSet[] => [
+  { name: MAIN_SET, actions: g.actions, extraScenes: g.extraScenes },
+  ...(g.sets ?? []),
+];
+
+/** ultimo stato applicato per gruppo: il set e cosa voleva (numero e configurazione) */
+const applied = new Map<number, { set: number; key: string }>();
+
+/** le scene su cui agisce un set: quelle nominate dalle azioni, i contenitori degli elementi, le extra */
+export const setScenes = (g: Pick<SceneSet, "actions" | "extraScenes">): Set<string> => {
   const s = new Set<string>(g.extraScenes);
   for (const a of Object.values(g.actions)) {
     if (a.scene) s.add(a.scene);
@@ -166,6 +186,14 @@ export const groupScenes = (g: GroupView): Set<string> => {
   return s;
 };
 
+/** le scene che più set userebbero (rifiutate: la scena di programma dice quale set agisce) */
+export const sharedScenes = (sets: Pick<SceneSet, "actions" | "extraScenes">[]): string[] => {
+  const seen = new Set<string>();
+  const shared = new Set<string>();
+  for (const set of sets) for (const sc of setScenes(set)) (seen.has(sc) ? shared : seen).add(sc);
+  return [...shared];
+};
+
 async function findItemId(container: string, source: string): Promise<number | null> {
   const list =
     (await request("GetSceneItemList", { sceneName: container }).catch(() => null)) ??
@@ -174,9 +202,9 @@ async function findItemId(container: string, source: string): Promise<number | n
   return it ? it.sceneItemId : null;
 }
 
-async function apply(g: GroupView) {
-  const action = g.actions[String(g.count)] ?? { items: [] };
-  const all = new Set(Object.values(g.actions).flatMap((a) => a.items));
+async function apply(g: GroupView, index: number, set: SceneSet, key: string) {
+  const action = set.actions[String(g.count)] ?? { items: [] };
+  const all = new Set(Object.values(set.actions).flatMap((a) => a.items));
   const missing: string[] = [];
   // prima gli elementi, poi la scena: niente fotogrammi con il layout sbagliato
   for (const ref of all) {
@@ -195,21 +223,26 @@ async function apply(g: GroupView) {
   if (action.scene && action.scene !== obs.programScene) {
     await request("SetCurrentProgramScene", { sceneName: action.scene }).catch(() => missing.push(action.scene!));
   }
-  applied.set(g.id, g.count);
-  obs.groupStatus[g.id] = missing.length ? { kind: "missing", items: missing } : { kind: "synced" };
+  applied.set(g.id, { set: index, key });
+  const name = g.sets?.length ? set.name : undefined;
+  obs.groupStatus[g.id] = missing.length ? { kind: "missing", items: missing, set: name } : { kind: "synced", set: name };
 }
 
 let running = Promise.resolve();
 export function reconcile() {
   running = running.then(async () => {
     for (const g of state.groups) {
-      const scenes = groupScenes(g);
-      if (!scenes.size) obs.groupStatus[g.id] = { kind: "none" };
+      const sets = groupSets(g);
+      const scenes = sets.map(setScenes);
+      const index = scenes.findIndex((s) => s.has(obs.programScene));
+      const key = index < 0 ? "" : JSON.stringify([g.count, sets[index].actions, sets[index].extraScenes]);
+      const last = applied.get(g.id);
+      if (scenes.every((s) => !s.size)) obs.groupStatus[g.id] = { kind: "none" };
       else if (!state.obs.drive) obs.groupStatus[g.id] = { kind: "off" };
       else if (obs.status !== "connected") obs.groupStatus[g.id] = { kind: "offline" };
-      else if (!scenes.has(obs.programScene)) obs.groupStatus[g.id] = { kind: "away", scene: obs.programScene };
-      else if (applied.get(g.id) !== g.count) await apply(g).catch(() => (obs.groupStatus[g.id] = { kind: "offline" }));
-      else if (obs.groupStatus[g.id]?.kind !== "missing") obs.groupStatus[g.id] = { kind: "synced" };
+      else if (index < 0) obs.groupStatus[g.id] = { kind: "away", scene: obs.programScene };
+      else if (last?.set !== index || last.key !== key) await apply(g, index, sets[index], key).catch(() => (obs.groupStatus[g.id] = { kind: "offline" }));
+      else if (obs.groupStatus[g.id]?.kind !== "missing") obs.groupStatus[g.id] = { kind: "synced", set: g.sets?.length ? sets[index].name : undefined };
     }
   });
   return running;
@@ -237,7 +270,7 @@ export function startObs() {
   );
   // riconcilia quando cambiano conteggi, azioni o Pilota OBS
   watch(
-    () => JSON.stringify([state.obs.drive, state.groups.map((g) => [g.id, g.count, g.actions, g.extraScenes])]),
+    () => JSON.stringify([state.obs.drive, state.groups.map((g) => [g.id, g.count, g.actions, g.extraScenes, g.sets])]),
     () => reconcile(),
   );
 }

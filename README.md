@@ -141,6 +141,15 @@ The group acts only if the **program scene is one of its own**: those named in t
 
 Groups, settings and the OBS connection are saved in `%APPDATA%\it.obsyard.app\config.json`. The obs-websocket password is saved in plain text.
 
+#### Scene sets
+
+Like guestroom.live's "scene sets": besides the main scenes a group can have up to four **scene sets** (*+ Add scene set* in the group editor), each with a name, its own actions per number of participants and its own *other scenes*. For example the camera scenes "Cam 1", "Cam 2", "Cam 3" in the main set and a "Reaction" set with "Reaction 1", "Reaction 2", "Reaction 3", with the cameras in picture-in-picture over the content.
+
+- The set holding the **program scene** acts: on "Reaction 2" a third participant leads to "Reaction 3", never to the camera scenes.
+- When you move to a scene of another set, that set's state for the current number applies **once**: on "Cam 1" with two participants OBS goes to "Cam 2". Moving between the scenes of the same set stays free.
+- A scene, including the containers of the items a set turns on, belongs to **one set** at most: the editor and saving refuse otherwise.
+- Each set turns off only the items it lists itself. The group's header shows the set in use.
+
 ### HTTP API (Stream Deck, OBS scripts)
 
 - `GET /api/state`: full state (tracks, slots, connected OBS sources)

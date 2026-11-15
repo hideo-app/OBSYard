@@ -65,6 +65,15 @@ export interface GroupConfig {
   /** azioni OBS per numero di partecipanti ("0".."n") */
   actions: Record<string, GroupAction>;
   extraScenes: string[];
+  /** altri set di scene (es. "Reaction"): la scena di programma di OBS dice quale agisce */
+  sets: GroupSceneSet[];
+}
+
+/** Set di scene oltre a quello principale del gruppo, con le sue azioni per numero di partecipanti */
+export interface GroupSceneSet {
+  name: string;
+  actions: Record<string, GroupAction>;
+  extraScenes: string[];
 }
 
 export interface GroupView extends GroupConfig {

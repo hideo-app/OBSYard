@@ -41,6 +41,63 @@ pub struct GroupConfig {
     /// altre scene su cui il gruppo può agire oltre a quelle nominate nelle azioni
     #[serde(default)]
     pub extra_scenes: Vec<String>,
+    /// altri set di scene (es. "Reaction"): la scena di programma di OBS dice quale agisce
+    #[serde(default)]
+    pub sets: Vec<GroupSceneSet>,
+}
+
+/// Set di scene oltre a quello principale del gruppo (come gli "scene sets" di guestroom.live):
+/// ha le sue azioni per numero di partecipanti e le sue scene extra.
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupSceneSet {
+    pub name: String,
+    #[serde(default)]
+    pub actions: BTreeMap<u32, GroupAction>,
+    #[serde(default)]
+    pub extra_scenes: Vec<String>,
+}
+
+/// set di scene oltre a quello principale, al massimo
+pub const MAX_GROUP_SETS: usize = 4;
+
+/// "Scena › Fonte" (o "Scena > Fonte") -> "Scena", come parseItem in obs.ts
+fn item_container(item: &str) -> Option<&str> {
+    let (scene, source) = item.split_once('›').or_else(|| item.split_once('>'))?;
+    let scene = scene.trim();
+    (!scene.is_empty() && !source.trim().is_empty()).then_some(scene)
+}
+
+/// Le scene su cui agisce un set: le scene extra, quelle delle azioni e i contenitori degli elementi.
+fn set_scenes(actions: &BTreeMap<u32, GroupAction>, extra: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    let all = extra.iter().map(|s| s.trim())
+        .chain(actions.values().filter_map(|a| a.scene.as_deref()))
+        .chain(actions.values().flat_map(|a| a.items.iter().filter_map(|i| item_container(i))));
+    for s in all {
+        if !s.is_empty() && !out.iter().any(|o| o == s) {
+            out.push(s.to_string());
+        }
+    }
+    out
+}
+
+impl GroupConfig {
+    /// Scene che più set del gruppo userebbero (rifiutate: la scena dice quale set agisce).
+    pub fn shared_scenes(&self) -> Vec<String> {
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut shared: Vec<String> = vec![];
+        let sets = std::iter::once(set_scenes(&self.actions, &self.extra_scenes))
+            .chain(self.sets.iter().map(|s| set_scenes(&s.actions, &s.extra_scenes)));
+        for scenes in sets {
+            for s in scenes {
+                if !seen.insert(s.clone()) && !shared.contains(&s) {
+                    shared.push(s);
+                }
+            }
+        }
+        shared
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -376,6 +433,27 @@ impl Groups {
         let n = g.slots.len() as u32;
         g.actions.retain(|k, a| *k <= n && (a.scene.is_some() || !a.items.is_empty()));
         g.extra_scenes.retain(|s| !s.trim().is_empty());
+        if g.sets.len() > MAX_GROUP_SETS {
+            return Err(format!("al massimo {MAX_GROUP_SETS} set di scene oltre a quello principale"));
+        }
+        let mut names: Vec<String> = vec![];
+        for set in g.sets.iter_mut() {
+            set.name = set.name.trim().to_string();
+            if set.name.is_empty() {
+                return Err("ogni set di scene deve avere un nome".into());
+            }
+            let key = set.name.to_lowercase();
+            if names.contains(&key) {
+                return Err(format!("due set di scene si chiamano \"{}\"", set.name));
+            }
+            names.push(key);
+            set.actions.retain(|k, a| *k <= n && (a.scene.is_some() || !a.items.is_empty()));
+            set.extra_scenes.retain(|s| !s.trim().is_empty());
+        }
+        let shared = g.shared_scenes();
+        if !shared.is_empty() {
+            return Err(format!("una scena appartiene a un solo set: {}", shared.join(", ")));
+        }
         if g.id == 0 {
             g.id = self.configs.iter().map(|c| c.id).max().unwrap_or(0) + 1;
             let id = g.id;
@@ -413,6 +491,9 @@ impl Groups {
             g.slots.retain(|s| *s != slot);
             let n = g.slots.len() as u32;
             g.actions.retain(|k, _| *k <= n);
+            for set in g.sets.iter_mut() {
+                set.actions.retain(|k, _| *k <= n);
+            }
         }
         let empty: Vec<u32> = self.configs.iter().filter(|g| g.slots.is_empty()).map(|g| g.id).collect();
         for id in empty {
@@ -469,6 +550,7 @@ impl Groups {
                     "slots": g.slots,
                     "actions": g.actions,
                     "extraScenes": g.extra_scenes,
+                    "sets": g.sets,
                     "members": list,
                     "count": self.count(g.id, is_live),
                     "testFill": test,
@@ -485,7 +567,7 @@ mod tests {
 
     fn grp(slots: &[u32]) -> Groups {
         let mut g = Groups::default();
-        g.save(GroupConfig { id: 0, name: "Panel".into(), slots: slots.to_vec(), actions: Default::default(), extra_scenes: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8])
+        g.save(GroupConfig { id: 0, name: "Panel".into(), slots: slots.to_vec(), actions: Default::default(), extra_scenes: vec![], sets: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8])
             .unwrap();
         g
     }
@@ -493,6 +575,7 @@ mod tests {
         g.members[&1].iter().map(|m| m.track.clone()).collect()
     }
     const ALL: &dyn Fn(&str) -> bool = &|_| true;
+    const ALL_SLOTS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8];
 
     #[test]
     fn riempie_in_ordine_e_sale_quando_uno_esce() {
@@ -556,14 +639,14 @@ mod tests {
     #[test]
     fn uno_slot_in_un_solo_gruppo() {
         let mut g = grp(&[1, 2]);
-        let r = g.save(GroupConfig { id: 0, name: "Altro".into(), slots: vec![2, 3], actions: Default::default(), extra_scenes: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r = g.save(GroupConfig { id: 0, name: "Altro".into(), slots: vec![2, 3], actions: Default::default(), extra_scenes: vec![], sets: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(r.unwrap_err().contains("già nel gruppo"));
     }
 
     #[test]
     fn una_persona_in_un_solo_gruppo() {
         let mut g = grp(&[1]);
-        g.save(GroupConfig { id: 0, name: "B".into(), slots: vec![2], actions: Default::default(), extra_scenes: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        g.save(GroupConfig { id: 0, name: "B".into(), slots: vec![2], actions: Default::default(), extra_scenes: vec![], sets: vec![] }, &[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
         g.place(1, 1, "a", "A", ALL);
         g.place(2, 2, "a", "A", ALL);
         assert!(g.members[&1].is_empty());
@@ -636,7 +719,7 @@ mod tests {
 #[test]
     fn gruppo_della_versione_a_8_slot_perde_le_uscite_inesistenti() {
         let mut g = Groups::from_configs(vec![GroupConfig {
-            id: 1, name: "Camera".into(), slots: vec![1, 2, 3, 4, 5, 6], actions: Default::default(), extra_scenes: vec![],
+            id: 1, name: "Camera".into(), slots: vec![1, 2, 3, 4, 5, 6], actions: Default::default(), extra_scenes: vec![], sets: vec![],
         }]);
         let stale = g.drop_missing_slots(&[1, 2, 3, 4]);
         assert_eq!(stale, vec![5, 6]);
@@ -650,7 +733,7 @@ mod tests {
     #[test]
     fn gruppo_con_sole_uscite_inesistenti_sparisce() {
         let mut g = Groups::from_configs(vec![GroupConfig {
-            id: 1, name: "Vecchio".into(), slots: vec![7, 8], actions: Default::default(), extra_scenes: vec![],
+            id: 1, name: "Vecchio".into(), slots: vec![7, 8], actions: Default::default(), extra_scenes: vec![], sets: vec![],
         }]);
         g.drop_missing_slots(&[1, 2, 3, 4]);
         assert!(g.configs.is_empty());
@@ -718,5 +801,61 @@ mod tests {
         g.place(1, 2, "b", "Bruno", ALL); // nuovo membro
         assert!(g.expire_fills(ALL));
         assert_eq!(g.fill(ALL), vec![(1, Some("a".into())), (2, Some("b".into())), (3, None)]);
+    }
+
+    fn act(scene: Option<&str>, items: &[&str]) -> GroupAction {
+        GroupAction { scene: scene.map(Into::into), items: items.iter().map(|s| s.to_string()).collect() }
+    }
+
+    fn with_sets(sets: Vec<GroupSceneSet>) -> GroupConfig {
+        GroupConfig {
+            id: 0, name: "Camera".into(), slots: vec![1, 2, 3],
+            actions: BTreeMap::from([(1, act(Some("Cam 1"), &[])), (2, act(Some("Cam 2"), &["Cam 2 › Ospite"]))]),
+            extra_scenes: vec![], sets,
+        }
+    }
+
+    fn reaction(name: &str, actions: BTreeMap<u32, GroupAction>) -> GroupSceneSet {
+        GroupSceneSet { name: name.into(), actions, extra_scenes: vec![] }
+    }
+
+    #[test]
+    fn set_di_scene_salvati_e_ripuliti() {
+        let mut g = Groups::default();
+        let set = reaction(" Reaction ", BTreeMap::from([(2, act(Some("Reaction 2"), &[])), (3, act(None, &[])), (9, act(Some("R9"), &[]))]));
+        let id = g.save(with_sets(vec![set]), ALL_SLOTS).unwrap();
+        let s = &g.cfg(id).unwrap().sets[0];
+        assert_eq!(s.name, "Reaction");
+        assert_eq!(s.actions.keys().copied().collect::<Vec<_>>(), vec![2]); // vuota e oltre le uscite: tolte
+    }
+
+    #[test]
+    fn una_scena_appartiene_a_un_solo_set() {
+        let mut g = Groups::default();
+        // "Cam 2" è già del set principale (scena dell'azione e contenitore dell'elemento)
+        let set = reaction("Reaction", BTreeMap::from([(1, act(None, &["Cam 2 > Overlay"]))]));
+        let e = g.save(with_sets(vec![set]), ALL_SLOTS).unwrap_err();
+        assert!(e.contains("Cam 2"), "{e}");
+        let set = GroupSceneSet { name: "R".into(), actions: Default::default(), extra_scenes: vec!["Cam 1".into()] };
+        assert!(g.save(with_sets(vec![set]), ALL_SLOTS).is_err());
+    }
+
+    #[test]
+    fn set_con_nomi_doppi_o_vuoti_o_troppi_rifiutati() {
+        let mut g = Groups::default();
+        let two = vec![reaction("Reaction", Default::default()), reaction("reaction", Default::default())];
+        assert!(g.save(with_sets(two), ALL_SLOTS).is_err());
+        assert!(g.save(with_sets(vec![reaction("  ", Default::default())]), ALL_SLOTS).is_err());
+        let many = (0..=MAX_GROUP_SETS).map(|i| reaction(&format!("S{i}"), Default::default())).collect();
+        assert!(g.save(with_sets(many), ALL_SLOTS).is_err());
+    }
+
+    #[test]
+    fn togliere_un_uscita_ripulisce_anche_i_set() {
+        let mut g = Groups::default();
+        let set = reaction("Reaction", BTreeMap::from([(3, act(Some("Reaction 3"), &[]))]));
+        let id = g.save(with_sets(vec![set]), ALL_SLOTS).unwrap();
+        g.remove_slot(3);
+        assert!(g.cfg(id).unwrap().sets[0].actions.is_empty());
     }
 }

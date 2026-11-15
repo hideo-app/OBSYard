@@ -2,10 +2,10 @@ import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  AppState, GroupConfig, GroupView, ObsConfig, Output, Settings, SlotAssign, TrackInfo,
+  AppState, GroupAction, GroupConfig, GroupSceneSet, GroupView, ObsConfig, Output, Settings, SlotAssign, TrackInfo,
 } from "../src-inject/types";
 
-export type { AppState, GroupConfig, GroupView, ObsConfig, Output, Settings, SlotAssign, TrackInfo };
+export type { AppState, GroupAction, GroupConfig, GroupSceneSet, GroupView, ObsConfig, Output, Settings, SlotAssign, TrackInfo };
 
 export const state = reactive<AppState>({
   port: 7878,

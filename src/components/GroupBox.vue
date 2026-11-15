@@ -13,9 +13,9 @@ const away = computed(() => props.group.members.filter((m) => m.place === "away"
 const status = computed(() => {
   const s = obs.groupStatus[props.group.id];
   switch (s?.kind) {
-    case "synced": return { cls: "ok", text: "OBS allineato" };
+    case "synced": return { cls: "ok", text: s.set ? `OBS allineato · ${s.set}` : "OBS allineato", title: s.set ? `Set di scene in uso: ${s.set}` : undefined };
     case "away": return { cls: "wait", text: `OBS su "${s.scene}"`, title: "La scena di programma non è una scena del gruppo: si allinea quando ci torni" };
-    case "missing": return { cls: "bad", text: "Elementi mancanti", title: s.items.join("\n") };
+    case "missing": return { cls: "bad", text: s.set ? `Elementi mancanti · ${s.set}` : "Elementi mancanti", title: s.items.join("\n") };
     case "offline": return { cls: "bad", text: "OBS offline" };
     case "off": return { cls: "dim", text: "Pilota OBS spento" };
     default: return null;
