@@ -35,6 +35,8 @@ npm run tauri dev        # development
 npm run tauri build      # NSIS installer in src-tauri/target/release/bundle
 ```
 
+**Releasing on GitHub** (`.github/workflows/release.yml`): set the version to `X.Y.Z` in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, then `git tag vX.Y.Z` and `git push --follow-tags`. GitHub builds on Windows (OBS plugin included) and creates a **draft** Release with the installer, to check and publish. The workflow stops if the tag does not match the version. Run by hand from *Actions*, it builds and keeps the installer among the run's artifacts, with no Release.
+
 1. Join the StreamYard studio in the *OBSYard – StreamYard* window.
 2. In the *control room* send sources to outputs: 1…N buttons on the card, drag and drop, Shift+1…9 or the output's menus (see *Sending sources to outputs*).
 3. In OBS add a **Browser Source** with the output's URL (`Copy URL`), 1920×1080, and tick *Control audio via OBS*.
