@@ -233,6 +233,14 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   OrigPC.prototype.setRemoteDescription = function (this: RTCPeerConnection, d?: RTCSessionDescriptionInit) {
     const sid = d?.sdp && offerStream.get(originLine(d.sdp));
     if (sid) pcStream.set(this, sid);
+    if (IS_DISCORD && d?.type === "answer" && d.sdp && allPcs.has(this)) {
+      try {
+        const sdp = dcAddAv1(d.sdp);
+        if (sdp !== d.sdp) arguments[0] = { type: d.type, sdp };
+      } catch (e) {
+        log("discord: AV1 in ricezione", e);
+      }
+    }
     return origSRD.apply(this, arguments as any);
   } as any;
   W.RTCPeerConnection = HookedPC;
@@ -267,7 +275,9 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   } catch {}
   const tap = { on: tapOn, log: [] as { dir: "out" | "in" | "http"; t: number; url: string; data: string }[] };
   const record = (dir: "out" | "in", ws: WebSocket, data: unknown) => {
-    if (!tap.on || typeof data !== "string") return;
+    // Discord: la connessione vocale si registra sempre (pochi messaggi piccoli), perché Discord
+    // toglie localStorage alla pagina e il tap non si può accendere prima di entrare in chiamata
+    if (typeof data !== "string" || !(tap.on || (IS_DISCORD && /discord\.media/.test(ws.url)))) return;
     tap.log.push({ dir, t: Date.now(), url: ws.url, data: data.length > 8000 ? data.slice(0, 8000) + "…" : data });
     if (tap.log.length > 2000) tap.log.splice(0, 500);
   };
@@ -396,22 +406,58 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   };
 
   /** Nome di un utente Discord dalla pagina: l'URL dell'avatar contiene l'id utente. */
+  /** un'etichetta che sembra un nome (non un pulsante o una sezione della pagina) */
+  const okName = (a: string | null | undefined) => {
+    const n = (a || "").replace(/,.*$/, "").trim();
+    return n && n.length <= 40 && !/^(opzioni|options|altro|more|video|canali|channels)$|avatar|riquadro|tile|impostazioni|settings|stato|status/i.test(n) ? n : null;
+  };
   const dcFindName = (id: string): string | null => {
-    for (const img of document.querySelectorAll<HTMLImageElement>(`img[src*="/avatars/${id}/"]`)) {
+    // riquadro della chiamata: data-selenium-video-tile="<id>", con dentro il nome visualizzato
+    for (const tile of document.querySelectorAll(`[data-selenium-video-tile="${id}"]`)) {
+      // prima il contenitore col nome (focusTarget), poi gli altri aria-label tranne i pulsanti
+      const labelled = [tile, ...tile.querySelectorAll('[class*="focusTarget"][aria-label]'), ...tile.querySelectorAll("[aria-label]")];
+      for (const el of labelled) {
+        if (el.tagName === "BUTTON" || el.getAttribute("role") === "button") continue;
+        const n = okName(el.getAttribute("aria-label"));
+        if (n) return n;
+      }
+      const u = okName(tile.querySelector<HTMLElement>('[class*="username"]')?.innerText);
+      if (u) return u;
+    }
+    const fromAvatar = dcNameFromAvatar(id);
+    if (fromAvatar) return fromAvatar;
+    // ultimo ripiego: il nome utente nel riquadro ("Riquadro chiamata, lorenzotafuro")
+    for (const tile of document.querySelectorAll(`[data-selenium-video-tile="${id}"]`)) {
+      for (const el of [tile, ...tile.querySelectorAll("[aria-label]")]) {
+        const m = /^(?:riquadro chiamata|call tile),\s*(.+)$/i.exec(el.getAttribute("aria-label") || "");
+        if (m && m[1].length <= 40) return m[1].trim();
+      }
+    }
+    return null;
+  };
+
+  /** nome dall'avatar: elenco del canale vocale, pannello account, riquadri senza video */
+  const dcNameFromAvatar = (id: string): string | null => {
+    // con la camera accesa l'avatar è uno sfondo (style="background-image: url(…/avatars/<id>/…)")
+    const avatars = [
+      ...document.querySelectorAll<HTMLElement>(`img[src*="/avatars/${id}/"]`),
+      ...document.querySelectorAll<HTMLElement>(`[style*="/avatars/${id}/"]`),
+    ];
+    for (const img of avatars as HTMLImageElement[]) {
       const own = (img.getAttribute("aria-label") || img.alt || "").replace(/,.*$/, "").trim();
       if (own && own.length <= 40 && !/avatar/i.test(own)) return own;
-      // riquadro della chiamata ed elenco del canale vocale: <div aria-label="nome"> attorno all'avatar
-      let up: Element | null = img.parentElement;
-      for (let depth = 0; up && depth < 6; depth++, up = up.parentElement) {
-        const a = (up.getAttribute("aria-label") || "").replace(/,.*$/, "").trim();
-        if (a && a.length <= 40 && !/avatar|impostazioni|settings|stato|status/i.test(a)) return a;
-      }
+      // risaliamo dall'avatar: a ogni livello prima l'aria-label (riquadri senza video), poi la
+      // prima riga di testo (elenco del canale vocale, pannello account). Ci fermiamo al bordo
+      // di un elenco: più su ci sono etichette come "Canali" o il nome del server.
       let node: Element | null = img.parentElement;
       for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+        if (/^(UL|OL|NAV|LI|SECTION|ASIDE)$/.test(node.tagName) || /^(group|list|listbox|navigation|tree)$/.test(node.getAttribute("role") || "")) break;
+        const a = okName(node.getAttribute("aria-label"));
+        if (a) return a;
         const line = ((node as HTMLElement).innerText || "")
           .split("\n")
-          .map((s) => s.trim())
-          .find((s) => s.length >= 2 && s.length <= 40);
+          .map((x) => x.trim())
+          .find((x) => x.length >= 2 && x.length <= 40);
         if (line) return line;
       }
     }
@@ -508,6 +554,44 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     }
   };
 
+  // ------------------------------------- Discord: ricevere anche AV1
+  /** payload type di AV1 (e del suo rtx) nella nostra offerta locale */
+  const dcAv1Pt = (): { pt: number; rtx: number | null } | null => {
+    for (const pc of allPcs) {
+      const sdp = pc.localDescription?.sdp ?? "";
+      const pt = /a=rtpmap:(\d+) AV1\/90000/.exec(sdp)?.[1];
+      if (!pt) continue;
+      const rtx = sdp.split(/\r?\n/).map((l) => /^a=fmtp:(\d+) apt=(\d+)\s*$/.exec(l)).find((m) => m?.[2] === pt)?.[1];
+      return { pt: Number(pt), rtx: rtx ? Number(rtx) : null };
+    }
+    return null;
+  };
+  /**
+   * Discord costruisce da sé l'SDP di risposta con il solo codec della sessione (H.264): un video
+   * che arriva in AV1 verrebbe scartato. Aggiungiamo AV1 a ogni sezione video, DOPO il codec di
+   * Discord, così per inviare resta scelto il suo.
+   */
+  const dcAddAv1 = (sdp: string): string => {
+    const av1 = dcAv1Pt();
+    if (!av1 || /AV1\/90000/.test(sdp)) return sdp;
+    const nl = sdp.includes("\r\n") ? "\r\n" : "\n";
+    const out: string[] = [];
+    let video = false;
+    for (const line of sdp.split(nl)) {
+      if (line.startsWith("m=")) {
+        video = line.startsWith("m=video");
+        out.push(video ? `${line} ${av1.pt}${av1.rtx ? " " + av1.rtx : ""}` : line);
+        if (video) {
+          out.push(`a=rtpmap:${av1.pt} AV1/90000`, `a=rtcp-fb:${av1.pt} nack`, `a=rtcp-fb:${av1.pt} nack pli`, `a=rtcp-fb:${av1.pt} transport-cc`);
+          if (av1.rtx) out.push(`a=rtpmap:${av1.rtx} rtx/90000`, `a=fmtp:${av1.rtx} apt=${av1.pt}`);
+        }
+        continue;
+      }
+      out.push(line);
+    }
+    return out.join(nl);
+  };
+
   const OrigWS = window.WebSocket;
   W.WebSocket = new Proxy(OrigWS, {
     construct(target, args, newTarget) {
@@ -523,6 +607,26 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     },
   });
   OrigWS.prototype.send = function (this: WebSocket, data: any) {
+    // Discord web annuncia al server solo H.264, VP8 e VP9 (op 1, "codecs"); i client desktop anche
+    // AV1 ("AV1X"), e chi trasmette con AV1 (es. encoder hardware recenti) al web non arriva decodificabile
+    // ("Impossibile avviare la webcam, errore 2012"). Il browser integrato decodifica AV1: lo
+    // aggiungiamo, con priorità dopo H.264, con i payload type della nostra offerta (l'SDP nel
+    // messaggio è ridotta e non li contiene). Vedi anche dcAddAv1 per l'SDP di ricezione.
+    if (IS_DISCORD && typeof data === "string" && data.includes('"op":1') && /discord\.media/.test(this.url)) {
+      try {
+        const m = JSON.parse(data);
+        const d = m?.d;
+        // Discord chiama il suo AV1 "AV1X" (così lo mostra anche il pannello Debug del client desktop)
+        if (m?.op === 1 && Array.isArray(d?.codecs) && !d.codecs.some((c: any) => /^AV1/.test(c?.name))) {
+          const av1 = dcAv1Pt();
+          if (av1) {
+            d.codecs.push({ name: "AV1X", type: "video", priority: 1500, payload_type: av1.pt, rtx_payload_type: av1.rtx });
+            data = JSON.stringify(m);
+            log("discord: annunciato AV1", av1.pt, av1.rtx);
+          }
+        }
+      } catch {}
+    }
     if (IS_DISCORD && typeof data === "string" && data.includes('"op":15') && /discord\.media/.test(this.url)) {
       try {
         const m = JSON.parse(data);
