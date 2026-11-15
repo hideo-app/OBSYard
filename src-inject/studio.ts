@@ -96,6 +96,23 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   const dcStreamWs = new WeakSet<WebSocket>();
   const dcNames = new Map<string, string>();
   const dcKey = (e: Entry) => `${e.dcUser}:${e.dcKind}`;
+  /** PeerConnection aperte dalla pagina (Discord: chiamata e Go Live) */
+  const allPcs = new Set<RTCPeerConnection>();
+  /** tracce locali che stiamo davvero inviando nella chiamata (senders delle PeerConnection) */
+  const dcSent = new Set<MediaStreamTrack>();
+  /** il nostro id utente (dall'identificazione della connessione vocale, op 0) */
+  let dcSelf: string | undefined;
+  /**
+   * Discord scrive nella sua SDP lo stream di ogni traccia ricevuta come "<id utente>-<ssrc>"
+   * (a=msid:906910029519683625-38789 …): basta questo per sapere di chi è, senza aspettare i pacchetti.
+   */
+  const dcFromStreams = (e: Entry): { user: string; ssrc: number } | undefined => {
+    for (const id of e.streamIds) {
+      const m = /^(\d{15,22})-(\d+)$/.exec(id);
+      if (m) return { user: m[1], ssrc: Number(m[2]) };
+    }
+    return undefined;
+  };
 
   /** undefined = non sappiamo (es. pagina di test): la consideriamo visibile */
   const onAir = (e: Entry): boolean | undefined => {
@@ -104,10 +121,17 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
       if (!e.dcUser) return false;
       return e.track.kind === "audio" || dcActive.get(dcKey(e)) !== false;
     }
+    // Discord apre il microfono più volte (prove, elaborazione WebAudio): conta solo quello inviato
+    if (IS_DISCORD) return dcSent.has(e.track);
     const s = syInfo(e);
     return s ? s.privacy === "public" : undefined;
   };
   const labelOf = (e: Entry) => {
+    if (IS_DISCORD && e.origin !== "remote") {
+      const me = (dcSelf && dcNames.get(dcSelf)) || "Tu";
+      if (e.origin === "screen") return `${me} (schermo)`;
+      return e.track.kind === "video" ? me : `${me} (microfono)`;
+    }
     if (IS_DISCORD && e.dcUser) {
       const name = dcNames.get(e.dcUser) ?? `Utente …${e.dcUser.slice(-4)}`;
       return e.dcKind === "screen" ? `${name} (schermo)` : name;
@@ -130,6 +154,8 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   /** schermo condiviso (nostro o di un ospite), non una webcam */
   const isScreen = (e: Entry) => {
     if (e.origin === "screen") return true;
+    if (IS_DISCORD) return e.dcKind === "screen"; // Go Live
+
     const s = syInfo(e);
     return !!s && s.kind !== "webcam";
   };
@@ -196,6 +222,8 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   const HookedPC = new Proxy(OrigPC, {
     construct(target, args, newTarget) {
       const pc: RTCPeerConnection = Reflect.construct(target, args, newTarget);
+      allPcs.add(pc);
+      pc.addEventListener("connectionstatechange", () => pc.connectionState === "closed" && allPcs.delete(pc));
       pc.addEventListener("track", (e: RTCTrackEvent) => register(e.track, "remote", e.streams, pcStream.get(pc), e.receiver));
       return pc;
     },
@@ -372,8 +400,14 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     for (const img of document.querySelectorAll<HTMLImageElement>(`img[src*="/avatars/${id}/"]`)) {
       const own = (img.getAttribute("aria-label") || img.alt || "").replace(/,.*$/, "").trim();
       if (own && own.length <= 40 && !/avatar/i.test(own)) return own;
+      // riquadro della chiamata ed elenco del canale vocale: <div aria-label="nome"> attorno all'avatar
+      let up: Element | null = img.parentElement;
+      for (let depth = 0; up && depth < 6; depth++, up = up.parentElement) {
+        const a = (up.getAttribute("aria-label") || "").replace(/,.*$/, "").trim();
+        if (a && a.length <= 40 && !/avatar|impostazioni|settings|stato|status/i.test(a)) return a;
+      }
       let node: Element | null = img.parentElement;
-      for (let depth = 0; node && depth < 5; depth++, node = node.parentElement) {
+      for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
         const line = ((node as HTMLElement).innerText || "")
           .split("\n")
           .map((s) => s.trim())
@@ -391,19 +425,34 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
     dcBusy = true;
     let changed = false;
     try {
+      // tracce locali inviate nella chiamata (camera, microfono elaborato, Go Live)
+      const sent = new Set<MediaStreamTrack>();
+      for (const pc of allPcs) for (const snd of pc.getSenders()) if (snd.track && snd.track.readyState === "live") sent.add(snd.track);
+      if (sent.size !== dcSent.size || [...sent].some((t) => !dcSent.has(t))) {
+        dcSent.clear();
+        sent.forEach((t) => dcSent.add(t));
+        changed = true;
+      }
+      // il microfono che Discord invia è una sua copia elaborata (WebAudio), mai passata da getUserMedia
+      for (const t of sent) if (!uids.has(t)) register(t, t.label.startsWith("screen") ? "screen" : "camera");
+
       for (const [uid, e] of [...tracks]) {
-        if (e.origin !== "remote" || !e.receiver) continue;
-        let ssrc: number | undefined;
-        try {
-          (await e.receiver.getStats()).forEach((s: any) => {
-            if (s.type === "inbound-rtp" && typeof s.ssrc === "number") ssrc = s.ssrc;
-          });
-        } catch {
-          continue;
+        if (e.origin !== "remote") continue;
+        let ssrc = dcFromStreams(e)?.ssrc;
+        if (ssrc === undefined && e.receiver) {
+          try {
+            (await e.receiver.getStats()).forEach((s: any) => {
+              if (s.type === "inbound-rtp" && typeof s.ssrc === "number") ssrc = s.ssrc;
+            });
+          } catch {
+            continue;
+          }
         }
         if (ssrc === undefined) continue;
         e.ssrc = ssrc;
-        const who = dcSsrc.get(ssrc);
+        // la connessione vocale dice anche se è camera o schermo; lo stream dice almeno di chi è
+        const fromStream = dcFromStreams(e);
+        const who = dcSsrc.get(ssrc) ?? (fromStream && { user: fromStream.user, kind: e.dcKind ?? ("video" as const) });
         if (!who || (who.user === e.dcUser && who.kind === e.dcKind)) continue;
         if (e.dcUser && e.dcUser !== who.user) {
           // Discord ha riusato la connessione per un altro utente: per noi è una sorgente nuova
@@ -418,11 +467,13 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
         changed = true;
       }
       // nomi: possono comparire nella pagina dopo
-      for (const e of tracks.values()) {
-        if (!e.dcUser) continue;
-        const name = dcFindName(e.dcUser);
-        if (name && dcNames.get(e.dcUser) !== name) {
-          dcNames.set(e.dcUser, name);
+      const users = new Set<string>();
+      for (const e of tracks.values()) if (e.dcUser) users.add(e.dcUser);
+      if (dcSelf) users.add(dcSelf);
+      for (const id of users) {
+        const name = dcFindName(id);
+        if (name && dcNames.get(id) !== name) {
+          dcNames.set(id, name);
           changed = true;
         }
       }
@@ -453,6 +504,16 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   const origSend = OrigWS.prototype.send;
   OrigWS.prototype.send = function (this: WebSocket, data: any) {
     syMessage("out", data);
+    // identificazione (op 0) sulla connessione vocale: il nostro id utente, e se è una connessione
+    // Go Live. I messaggi in arrivo non dicono il tipo: lo dice solo la nostra richiesta
+    // (streams: [{ type: "screen" }]), quindi la marchiamo qui, prima che arrivino gli op 12.
+    if (IS_DISCORD && typeof data === "string" && /discord\.media/.test(this.url) && data.includes('"op":0')) {
+      try {
+        const d = JSON.parse(data)?.d;
+        if (d?.user_id && !dcSelf) dcSelf = String(d.user_id);
+        if (Array.isArray(d?.streams) && d.streams.some((x: any) => x?.type === "screen")) dcStreamWs.add(this);
+      } catch {}
+    }
     record("out", this, data);
     return origSend.call(this, data);
   };
@@ -487,7 +548,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
       sockets,
       debug: () => ({
         syStreams: [...syStreams], syNames: [...syNames], localStream: [...localStream], offers: offerStream.size,
-        dcSsrc: [...dcSsrc], dcActive: [...dcActive], dcNames: [...dcNames],
+        dcSsrc: [...dcSsrc], dcActive: [...dcActive], dcNames: [...dcNames], dcSelf, dcSent: dcSent.size, pcs: allPcs.size,
         tracks: [...tracks].map(([id, e]) => ({ id, kind: e.track.kind, origin: e.origin, ssrc: e.ssrc, dcUser: e.dcUser, dcKind: e.dcKind, onAir: onAir(e), label: labelOf(e) })),
       }),
     },
