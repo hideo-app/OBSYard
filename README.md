@@ -36,10 +36,10 @@ npm run tauri build      # NSIS installer in src-tauri/target/release/bundle
 ```
 
 1. Join the StreamYard studio in the *OBSYard – StreamYard* window.
-2. In the *control room* send sources to outputs (1…N buttons on the card, in the outputs' order, or the output's menus).
+2. In the *control room* send sources to outputs: 1…N buttons on the card, drag and drop, Shift+1…9 or the output's menus (see *Sending sources to outputs*).
 3. In OBS add a **Browser Source** with the output's URL (`Copy URL`), 1920×1080, and tick *Control audio via OBS*.
 
-URL parameters: `?audio=0` (video only), `?fit=cover`, `?bg=000000` (solid background), `?debug=1` (fps/resolution/codec/latency).
+URL parameters: `?audio=0` (video only), `?fit=cover`, `?bg=000000` (solid background), `?lt=0` (no lower third on that source), `?debug=1` (fps/resolution/codec/latency).
 
 ### Sources
 
@@ -53,14 +53,65 @@ URL parameters: `?audio=0` (video only), `?fit=cover`, `?bg=000000` (solid backg
 Like guestroom.live's outputs:
 
 - **+ Add output** under the list suggests the next *Cam N* name.
-- Each output's ⋮ menu has **Rename** (also by double-clicking the name), **Move up/down**, that output's *Without video* background and **Delete**.
+- Each output's ⋮ menu has **Rename** (also by double-clicking the name), **Move output up/down** (also Alt+↑/↓ with the row focused), the **connection details**, that output's lower third, the *Without video* background and **Delete**.
 - The URL uses a stable id (`/slot/{id}`): renaming or moving does not touch the sources in OBS.
+- A source can also open the output **by name**: `/slot/Cam%201` (⋮ → *Copy URL by name*; case and spaces do not matter). The name is read when OBS opens the page: after renaming the output, that source has to be updated. If a name is also another output's id (e.g. an output called "2"), the id wins.
 - A deleted output also leaves its group. A group left without outputs disappears.
 
 **Without video** (empty output, guest off air, camera off, guest stuck with no frame for more than 1.2 s), the output does not freeze on the last frame.
 
 - It shows what you pick in **Without video: Transparent / Black**, at the top of the outputs.
 - Each output can differ from its ⋮ menu (*As the setting*, *Transparent* or *Black*); the exception shows as a tag next to the name.
+
+### Sending sources to outputs
+
+Outputs are numbered 1…N in the order they appear on screen: the same number as the buttons on the cards.
+
+- **Buttons on the card**: button N sends the source to output N; pressed again it removes it.
+- **Drag and drop**: drag a card onto an output. While you drag, the output under the pointer says what dropping will do (*Send here*, *Replace*, *Insert here*).
+- **Shift+1…9**: click a card to select it (blue border), then Shift+N sends it to output N. Esc deselects.
+- **Swapping outputs**: drag an output's thumbnail onto another. Two outputs outside groups swap what they show; two outputs of the same group swap the people's places; otherwise the first one's source is sent to the second.
+
+### Tally (ON AIR)
+
+Every Browser Source tells OBSYard whether it is **on program** in OBS or only **visible** (preview in Studio Mode), through OBS's `obsSourceActiveChanged` and `obsSourceVisibleChanged` events.
+
+- The output and the card of the source it shows turn red with **ON AIR**; green with **PREVIEW** when they are only visible. At the top the control room counts the outputs on program.
+- Neither obs-websocket nor *Drive OBS* is needed.
+- OBS tells a source only when the state **changes**, never when the page loads. After a source refresh, or if OBS starts on that scene already, the tally shows up at the first scene change.
+- Guests do not get it: they are in StreamYard.
+
+### Connection details
+
+An output's **OBS N** button (or ⋮ → *Show connection details*) opens a panel under the row, refreshed every second: connection state, resolution and fps received by OBS, bitrate, codec, delay (jitter buffer and RTT), lost packets and frames, freezes, audio. With several OBS sources on the same output there is one per source. The data is read only while the panel is open.
+
+### Lower thirds
+
+Optional, chosen in the control room's **Lower thirds** section: *Off*, *On the output* or *In OBS Text sources*.
+
+- The text is the person's StreamYard name. The **Aa** button on the card changes the name shown and adds a **second line** (role, handle…). It stays saved for that name and applies every time the person comes back on air.
+- An output is left out from its ⋮ menu (*Lower third on this output*), a single source with `?lt=0` in the URL.
+- The lower third shows only while the output has video.
+
+**On the output**: the output's page draws the lower third over the video. Restyle it in the Browser Source's *Custom CSS* field, with the same classes and variables as guestroom.live:
+
+| Hook | What it is |
+| --- | --- |
+| `.lower-third` | the bar (bottom left) |
+| `.lower-third-name`, `.lower-third-title` | the name and the second line (absent when empty) |
+| `data-source-kind="camera"` / `"screen"` | on `.lower-third`: the kind of source |
+| `data-state="in"` / `"out"` | on `.lower-third`: comes in with `in`, goes back to `out` before leaving |
+| `--lt-bg`, `--lt-fg`, `--lt-accent` | background, text and accent bar |
+| `--lt-font`, `--lt-name-size`, `--lt-title-size` | font and sizes (4.4% and 2.6% of the height) |
+| `--lt-offset-x`, `--lt-offset-y`, `--lt-radius` | distance from the edges and corner radius |
+
+The default rules have zero specificity, so a plain selector is enough to change them.
+
+**In OBS Text sources**: OBSYard writes name and second line into two Text sources per output, called `<output> nome` and `<output> titolo` (for example `Cam 1 nome`), and empties them when the output empties or lower thirds are turned off. The pages draw nothing.
+
+- It needs obs-websocket: OBSYard connects even without *Drive OBS*.
+- If the sources are missing, the output shows *text missing* and the Lower thirds section offers **Create in OBS**: it creates them at the bottom left of the current scene (the preview scene in Studio Mode). Then move and style them in OBS.
+- Renaming an output also changes the names of the sources OBSYard looks for.
 
 ### Guests at full resolution
 
@@ -93,6 +144,8 @@ In the studio, `localStorage.obsyardTap = "1"` records StreamYard's WebSocket me
 
 ## Output groups
 
+On first start OBSYard creates four outputs and a group, *Gruppo 1*, holding all of them. It can be edited or deleted like the others.
+
 They work like guestroom.live's camera groups. A group is an ordered list of slots (fill order) plus an ordered list of guests. Guest 1 goes on the first slot, guest 2 on the second and so on. Slots left over stay empty (transparent).
 
 - **Create** with *+ Add group* under the outputs: name, outputs in order and, if you like, what to do in OBS for each number of participants. The group's ⚙ edits or deletes it. A slot belongs to one group at most, and a guest to one group.
@@ -102,6 +155,7 @@ They work like guestroom.live's camera groups. A group is an ordered list of slo
   - the first free output takes the guest at once. A free output **further on** asks first, as in guestroom, because the group leaves no gaps. You can cancel, or **fill up to there** with that person (fill test, below). From the API, with no question, the guest is queued;
   - emptying a slot of the group removes whoever was on it from the group.
 - Only connected guests count. If someone leaves, the others **move up at once, on air too**. Whoever comes back with the same name takes their place again. Under the slots a line shows who is *on standby* and who is *away*, with a × to remove them from the group.
+- **Reorder** members by dragging a group output onto another (swapping places), with *Person up/down* in the ⋮ menu or Alt+↑/↓ on the row. Someone on standby moves up one place with their ↑, or is dragged onto a group output. Those away stay where they are.
 - When a group is deleted, its slots keep what they show.
 
 ### Fill test (same person on several outputs)
@@ -130,7 +184,7 @@ They are set in the control room's **Participants** section and apply to the who
 
 ### OBS actions per number of participants
 
-Connect OBS under *OBS WebSocket* (OBS → Tools → WebSocket Server Settings) and turn on **Drive OBS**. OBSYard connects to OBS only with *Drive OBS* on. For each number of participants (from 0 to the number of slots) a group can:
+Connect OBS under *OBS WebSocket* (OBS → Tools → WebSocket Server Settings) and turn on **Drive OBS**. OBSYard connects to OBS only with *Drive OBS* on (or with lower thirds in Text sources). For each number of participants (from 0 to the number of slots) a group can:
 
 - **switch to a scene** (`SetCurrentProgramScene`);
 - **turn items on**, written as `Scene › Source` or `OBS group › Source`. The other items the group lists for any number are turned off (`SetSceneItemEnabled`).
@@ -153,7 +207,7 @@ Like guestroom.live's "scene sets": besides the main scenes a group can have up 
 ### HTTP API (Stream Deck, OBS scripts)
 
 - `GET /api/state`: full state (tracks, slots, connected OBS sources)
-- `GET /api/assign?slot=1&video=Mario&audio=auto`: `video`/`audio` take a track id, part of the guest's name or `none`
+- `GET /api/assign?slot=1&video=Mario&audio=auto`: `slot` takes the output's id or name (`slot=Cam%201`); `video`/`audio` take a track id, part of the guest's name or `none`
 
 ### Testing without StreamYard
 

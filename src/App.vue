@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
   state, init, videoTracks, audioTracks, slotLayout, setSettings, setObs, studio, addOutput, nextOutputName, setFullRes,
-  type Settings, type GroupView, type ObsConfig,
+  selected, outputsOnScreen, sendTo, trackById, outputName, drag,
+  type Settings, type GroupView, type ObsConfig, type TrackInfo,
 } from "./store";
-import { obs, startObs } from "./obs";
+import { obs, startObs, obsWanted, createLtInputs } from "./obs";
 import SourceCard from "./components/SourceCard.vue";
 import SlotRow from "./components/SlotRow.vue";
 import GroupBox from "./components/GroupBox.vue";
 import GroupDialog from "./components/GroupDialog.vue";
+import LowerThirdDialog from "./components/LowerThirdDialog.vue";
 
 const error = ref<string | null>(null);
 const draft = ref<Settings>({ ...state.settings });
@@ -18,6 +20,8 @@ watch(() => state.obs, (o) => (obsDraft.value = { ...o }), { deep: true });
 
 /** undefined = chiuso, null = nuovo gruppo */
 const editing = ref<GroupView | null | undefined>(undefined);
+/** sorgente di cui si modifica il sottopancia */
+const ltEditing = ref<TrackInfo | null>(null);
 
 onMounted(() =>
   init()
@@ -75,25 +79,94 @@ const fullResInfo = (): { cls: string; text: string; title?: string } | null => 
 
 const obsLabel = () =>
   ({ idle: "OBS: non configurato", connecting: "OBS: connessione…", connected: "OBS connesso", auth: "OBS: password errata", error: "OBS non raggiungibile" })[obs.status];
+
+// ---------- tally: quante uscite sono in programma ----------
+const onAir = computed(() => Object.values(state.tally).filter((t) => t === "program").length);
+
+// ---------- sottopancia ----------
+const setLtMode = (e: Event) =>
+  setSettings({ ...state.settings, lowerThirds: (e.target as HTMLSelectElement).value as Settings["lowerThirds"] });
+const ltMissingCount = computed(() => Object.values(obs.ltMissing).reduce((n, l) => n + l.length, 0));
+const ltBusy = ref(false);
+const ltNote = ref("");
+const createInObs = async () => {
+  ltBusy.value = true;
+  ltNote.value = "";
+  try {
+    const n = await createLtInputs();
+    ltNote.value = `${n} fonti Testo create nella scena corrente: spostale e dai loro lo stile in OBS.`;
+  } catch (e) {
+    ltNote.value = String(e);
+  } finally {
+    ltBusy.value = false;
+  }
+};
+
+// ---------- sorgente selezionata: Shift+1…9 la manda sull'uscita N, Esc deseleziona ----------
+const selectedTrack = computed(() => trackById(selected.value));
+watch(selectedTrack, (t) => !t && (selected.value = null)); // uscita di scena: niente selezione fantasma
+const flash = ref("");
+let flashTimer = 0;
+const say = (text: string) => {
+  flash.value = text;
+  clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => (flash.value = ""), 2500);
+};
+const onKey = (e: KeyboardEvent) => {
+  const el = e.target as HTMLElement;
+  if (el.closest("input, textarea, select, .dialog")) return;
+  if (e.key === "Escape") {
+    if (drag.kind) drag.kind = null;
+    else selected.value = null;
+    return;
+  }
+  const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+  if (!m || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+  e.preventDefault();
+  const t = selectedTrack.value;
+  if (!t) return say("Seleziona prima una sorgente (clic sulla card), poi Shift+1…9");
+  const slot = outputsOnScreen.value[Number(m[1]) - 1];
+  if (slot == null) return say(`Non c'è un'uscita ${m[1]}`);
+  void sendTo(slot, t.id);
+  say(`${t.label} → ${outputName(slot)}`);
+};
+document.addEventListener("keydown", onKey);
+onBeforeUnmount(() => document.removeEventListener("keydown", onKey));
+
+// ---------- sezioni richiudibili (ricordate) ----------
+const OPEN_KEY = "obsyard.sections";
+const open = reactive<Record<string, boolean>>({ lt: false, people: false, quality: false, obs: false });
+try {
+  Object.assign(open, JSON.parse(localStorage.getItem(OPEN_KEY) ?? "{}"));
+} catch { /* preferenze illeggibili: sezioni chiuse */ }
+const toggleSection = (k: string, e: Event) => {
+  open[k] = (e.target as HTMLDetailsElement).open;
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify(open));
+  } catch { /* senza archivio le sezioni non vengono ricordate */ }
+};
+const ltModeLabel = computed(() => ({ off: "spenti", page: "sull'uscita", obs: "in fonti Testo di OBS" })[state.settings.lowerThirds]);
 </script>
 
 <template>
   <header class="top">
-    <div class="brand"><span class="dot" />OBSYard</div>
+    <div class="brand"><span class="dot" :class="{ air: onAir }" />OBSYard</div>
     <span class="pill" :class="state.publisherReady ? 'ok' : 'wait'">
       {{ state.publisherReady ? "StreamYard collegato" : "In attesa di StreamYard…" }}
     </span>
-    <span v-if="state.obs.drive" class="pill" :class="obs.status === 'connected' ? 'ok' : 'wait'" :title="obs.error">{{ obsLabel() }}</span>
-    <label class="drive" title="I gruppi cambiano scene ed elementi di OBS in base al numero di partecipanti">
-      <input type="checkbox" :checked="state.obs.drive" @change="toggleDrive" /> Pilota OBS
-    </label>
-    <label class="drive" title="Passa al layout personalizzato con tutti i riquadri a piena altezza: gli ospiti inviano alla massima risoluzione. Cambia anche il layout della diretta di StreamYard.">
-      <input type="checkbox" :checked="state.fullRes.on" @change="setFullRes(!state.fullRes.on)" /> Ospiti a piena risoluzione
-    </label>
-    <span v-if="fullResInfo()" class="gpill" :class="fullResInfo()!.cls" :title="fullResInfo()!.title">{{ fullResInfo()!.text }}</span>
+    <span v-if="obsWanted()" class="pill" :class="obs.status === 'connected' ? 'ok' : 'wait'" :title="obs.error">{{ obsLabel() }}</span>
+    <span v-if="onAir" class="pill air" title="Uscite in programma in OBS">ON AIR · {{ onAir }}</span>
+    <span v-if="fullResInfo()" class="pill" :class="fullResInfo()!.cls" :title="fullResInfo()!.title">{{ fullResInfo()!.text }}</span>
     <div class="spacer" />
+    <label class="switch" title="I gruppi cambiano scene ed elementi di OBS in base al numero di partecipanti">
+      <input type="checkbox" :checked="state.obs.drive" @change="toggleDrive" /><span class="track" /> Pilota OBS
+    </label>
+    <label class="switch" title="Passa al layout personalizzato con tutti i riquadri a piena altezza: gli ospiti inviano alla massima risoluzione. Cambia anche il layout della diretta di StreamYard.">
+      <input type="checkbox" :checked="state.fullRes.on" @change="setFullRes(!state.fullRes.on)" /><span class="track" /> Piena risoluzione
+    </label>
+    <span class="vsep" />
     <button @click="studio('show')">Mostra StreamYard</button>
-    <button class="ghost" @click="studio('reload')">Ricarica</button>
+    <button class="ghost" title="Ricarica lo studio StreamYard" @click="studio('reload')">Ricarica</button>
   </header>
 
   <p v-if="error" class="err">{{ error }}</p>
@@ -101,17 +174,24 @@ const obsLabel = () =>
   <main class="grid">
     <section class="panel">
       <h2>Sorgenti <small>{{ videoTracks.length }} video · {{ audioTracks.length }} audio</small></h2>
-      <p v-if="!videoTracks.length" class="empty">
+      <p v-if="!videoTracks.length" class="empty box">
         Nessuna sorgente. Entra nello studio StreamYard: ospiti, camera e schermi condivisi compariranno qui.
       </p>
+      <p v-else class="tip" :class="{ sel: selectedTrack }" role="status">
+        <template v-if="flash">{{ flash }}</template>
+        <template v-else-if="selectedTrack">
+          <strong>{{ selectedTrack.label }}</strong> selezionata: <kbd>Shift</kbd>+<kbd>1…9</kbd> la manda su un'uscita · <kbd>Esc</kbd> deseleziona
+        </template>
+        <template v-else>Trascina una sorgente su un'uscita, usa i numeri sulla card, oppure selezionala e premi <kbd>Shift</kbd>+<kbd>1…9</kbd>.</template>
+      </p>
       <div class="cards">
-        <SourceCard v-for="t in videoTracks" :key="t.id" :track="t" />
+        <SourceCard v-for="t in videoTracks" :key="t.id" :track="t" @lower-third="ltEditing = $event" />
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel side">
       <div class="uhead">
-        <h2>Uscite OBS <small>Fonte browser, consigliato 1920×1080</small></h2>
+        <h2>Uscite OBS <small>Fonte browser, 1920×1080</small></h2>
         <label class="bgpick" title="Cosa mostrano le uscite senza video: vuote, ospite fuori onda, camera spenta. Ogni uscita può fare eccezione dal suo menu ⋮">
           Senza video
           <select :value="state.settings.emptyBg" @change="setSettings({ ...state.settings, emptyBg: ($event.target as HTMLSelectElement).value as 'transparent' | 'black' })">
@@ -134,59 +214,102 @@ const obsLabel = () =>
         <button class="addgroup" @click="editing = null">+ Aggiungi gruppo</button>
       </div>
 
-      <h2 class="mt">Partecipanti</h2>
-      <label class="check">
-        <input type="checkbox" :checked="state.settings.autoAdd" @change="toggleAutoAdd" />
-        Aggiungi automaticamente al primo gruppo, in ordine di arrivo
-      </label>
-      <p v-if="state.settings.autoAdd && !state.groups.length" class="hint warnline">
-        Nessun gruppo: crea un gruppo con le uscite da riempire, i partecipanti entrano nel primo.
-      </p>
-      <label class="field prio">Precedenza <small>(un nome per riga, il primo è il più importante)</small>
-        <textarea v-model="priorityText" rows="4" placeholder="Mario Rossi&#10;Giulia" @blur="savePriority" />
-      </label>
-      <p class="hint">
-        Chi è in elenco entra davanti a chi ha meno precedenza, e se le uscite sono piene l'ultimo va in attesa.
-        "Mario" vale anche per "Mario Rossi". Gli spostamenti a mano restano; chi togli a mano non viene riaggiunto.
-      </p>
-
-      <h2 class="mt">Qualità inoltro</h2>
-      <form class="settings" @submit.prevent="saveSettings">
-        <label>Codec
-          <select v-model="draft.codec">
-            <option value="H264">H.264 (encoder hardware)</option>
-            <option value="VP8">VP8</option>
-            <option value="VP9">VP9</option>
-            <option value="AV1">AV1</option>
+      <details class="sec" :open="open.lt" @toggle="toggleSection('lt', $event)">
+        <summary>Sottopancia <small>{{ ltModeLabel }}</small></summary>
+        <label class="field row">Dove vanno
+          <select :value="state.settings.lowerThirds" @change="setLtMode">
+            <option value="off">Spenti</option>
+            <option value="page">Sull'uscita (disegnati dalla pagina)</option>
+            <option value="obs">In fonti Testo di OBS</option>
           </select>
         </label>
-        <label>Bitrate max (kbps)
-          <input v-model="draft.maxBitrateKbps" type="number" min="1000" max="50000" step="500" />
-        </label>
-        <label>FPS max
-          <input v-model="draft.maxFps" type="number" min="15" max="60" />
-        </label>
-        <label title="Nome del layout che OBSYard crea e riscrive in StreamYard per 'Ospiti a piena risoluzione'">Layout piena risoluzione
-          <input v-model="draft.fullResLayout" maxlength="60" style="width: 160px" />
-        </label>
-        <button type="submit">Applica</button>
-      </form>
+        <template v-if="state.settings.lowerThirds === 'page'">
+          <p class="hint">
+            Ogni uscita disegna il nome di chi mostra, mentre ha video. Lo stile si cambia nel <em>CSS personalizzato</em> della Fonte browser:
+            <code>.lower-third</code>, <code>.lower-third-name</code>, <code>.lower-third-title</code> e le variabili
+            <code>--lt-bg</code>, <code>--lt-fg</code>, <code>--lt-accent</code>, <code>--lt-font</code>, <code>--lt-name-size</code>,
+            <code>--lt-title-size</code>, <code>--lt-offset-x</code>, <code>--lt-offset-y</code>, <code>--lt-radius</code> (le stesse di guestroom.live).
+          </p>
+        </template>
+        <template v-else-if="state.settings.lowerThirds === 'obs'">
+          <p class="hint">
+            OBSYard scrive nome e seconda riga in due fonti Testo per uscita, chiamate <code>&lt;uscita&gt; nome</code> e
+            <code>&lt;uscita&gt; titolo</code> (es. <code>Cam 1 nome</code>), e le svuota quando l'uscita si svuota. Le pagine non disegnano nulla.
+          </p>
+          <p v-if="obs.status !== 'connected'" class="hint warnline">{{ obsLabel() }}: controlla indirizzo e password in OBS WebSocket.</p>
+          <p v-else-if="ltMissingCount" class="hint warnline">
+            In OBS mancano {{ ltMissingCount }} fonti Testo.
+            <button class="mini-btn" :disabled="ltBusy" @click="createInObs">Crea in OBS</button>
+          </p>
+          <p v-else class="hint okline">Tutte le fonti Testo ci sono.</p>
+          <p v-if="ltNote" class="hint">{{ ltNote }}</p>
+        </template>
+        <p v-if="state.settings.lowerThirds !== 'off'" class="hint">
+          Nome e seconda riga di una persona: pulsante <strong>Aa</strong> sulla sua card. Per escludere un'uscita: menu ⋮ → <em>Sottopancia su questa uscita</em>.
+        </p>
+      </details>
 
-      <h2 class="mt">OBS WebSocket <small>OBS → Strumenti → Impostazioni server WebSocket</small></h2>
-      <form class="settings" @submit.prevent="saveObs">
-        <label>Indirizzo
-          <input v-model="obsDraft.url" placeholder="ws://127.0.0.1:4455" style="width: 180px" />
+      <details class="sec" :open="open.people" @toggle="toggleSection('people', $event)">
+        <summary>Partecipanti <small>{{ state.settings.autoAdd ? "aggiunta automatica" : "aggiunta a mano" }}{{ state.settings.priority.length ? ` · ${state.settings.priority.length} con precedenza` : "" }}</small></summary>
+        <label class="check">
+          <input type="checkbox" :checked="state.settings.autoAdd" @change="toggleAutoAdd" />
+          Aggiungi automaticamente al primo gruppo, in ordine di arrivo
         </label>
-        <label>Password
-          <input v-model="obsDraft.password" type="password" autocomplete="off" />
+        <p v-if="state.settings.autoAdd && !state.groups.length" class="hint warnline">
+          Nessun gruppo: crea un gruppo con le uscite da riempire, i partecipanti entrano nel primo.
+        </p>
+        <label class="field prio">Precedenza <small>(un nome per riga, il primo è il più importante)</small>
+          <textarea v-model="priorityText" rows="4" placeholder="Mario Rossi&#10;Giulia" @blur="savePriority" />
         </label>
-        <button type="submit">Connetti</button>
-      </form>
-      <p class="hint">
-        API per Stream Deck: <code>http://127.0.0.1:{{ state.port }}/api/assign?slot=1&amp;video=Mario</code>
-      </p>
+        <p class="hint">
+          Chi è in elenco entra davanti a chi ha meno precedenza, e se le uscite sono piene l'ultimo va in attesa.
+          "Mario" vale anche per "Mario Rossi". Gli spostamenti a mano restano; chi togli a mano non viene riaggiunto.
+        </p>
+      </details>
+
+      <details class="sec" :open="open.quality" @toggle="toggleSection('quality', $event)">
+        <summary>Qualità inoltro <small>{{ state.settings.codec }} · {{ state.settings.maxBitrateKbps / 1000 }} Mbps · {{ state.settings.maxFps }} fps</small></summary>
+        <form class="settings" @submit.prevent="saveSettings">
+          <label>Codec
+            <select v-model="draft.codec">
+              <option value="H264">H.264 (encoder hardware)</option>
+              <option value="VP8">VP8</option>
+              <option value="VP9">VP9</option>
+              <option value="AV1">AV1</option>
+            </select>
+          </label>
+          <label>Bitrate max (kbps)
+            <input v-model="draft.maxBitrateKbps" type="number" min="1000" max="50000" step="500" />
+          </label>
+          <label>FPS max
+            <input v-model="draft.maxFps" type="number" min="15" max="60" />
+          </label>
+          <label title="Nome del layout che OBSYard crea e riscrive in StreamYard per 'Piena risoluzione'">Layout piena risoluzione
+            <input v-model="draft.fullResLayout" maxlength="60" style="width: 160px" />
+          </label>
+          <button type="submit">Applica</button>
+        </form>
+      </details>
+
+      <details class="sec" :open="open.obs" @toggle="toggleSection('obs', $event)">
+        <summary>OBS WebSocket <small>{{ obsWanted() ? obsLabel() : "non in uso" }}</small></summary>
+        <p class="hint first">In OBS: Strumenti → Impostazioni server WebSocket. Serve per <em>Pilota OBS</em> e per i sottopancia in fonti Testo.</p>
+        <form class="settings" @submit.prevent="saveObs">
+          <label>Indirizzo
+            <input v-model="obsDraft.url" placeholder="ws://127.0.0.1:4455" style="width: 180px" />
+          </label>
+          <label>Password
+            <input v-model="obsDraft.password" type="password" autocomplete="off" />
+          </label>
+          <button type="submit">Connetti</button>
+        </form>
+        <p class="hint">
+          API per Stream Deck: <code>http://127.0.0.1:{{ state.port }}/api/assign?slot=1&amp;video=Mario</code>
+        </p>
+      </details>
     </section>
   </main>
 
   <GroupDialog v-if="editing !== undefined" :group="editing" @close="editing = undefined" />
+  <LowerThirdDialog v-if="ltEditing" :track="ltEditing" @close="ltEditing = null" />
 </template>

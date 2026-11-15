@@ -60,7 +60,16 @@ async fn index(State(hub): State<SharedHub>) -> Html<String> {
     let outputs = hub.lock().unwrap().outputs.clone();
     let links: String = outputs
         .iter()
-        .map(|o| format!("<li><a href=\"/slot/{0}\">{1}</a> <code>/slot/{0}</code></li>", o.id, html_escape(&o.name)))
+        .map(|o| {
+            let by_name = url_escape(&o.name);
+            format!(
+                "<li><a href=\"/slot/{0}\">{1}</a> <code>/slot/{0}</code> · <a href=\"/slot/{2}\"><code>/slot/{3}</code></a></li>",
+                o.id,
+                html_escape(&o.name),
+                by_name,
+                html_escape(&by_name)
+            )
+        })
         .collect();
     Html(format!(
         "<!doctype html><meta charset=utf-8><title>OBSYard</title>\
@@ -70,24 +79,43 @@ async fn index(State(hub): State<SharedHub>) -> Html<String> {
     ))
 }
 
+/// Codifica un nome per il percorso dell'URL (spazi e caratteri non sicuri in %XX).
+pub fn url_escape(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-async fn slot_page(Path(n): Path<u32>, State(hub): State<SharedHub>) -> Response {
-    if !hub.lock().unwrap().has_output(n) {
-        return (StatusCode::NOT_FOUND, "slot inesistente").into_response();
-    }
-    Html(format!(
-        "<!doctype html><html><head><meta charset=utf-8><title>OBSYard slot {n}</title>\
-         <style>html,body{{margin:0;height:100%;overflow:hidden;background:transparent}}\
-         video{{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;opacity:0}}\
-         video.on{{opacity:1}}</style></head>\
-         <body><video id=v autoplay playsinline disablepictureinpicture></video>\
-         <script>window.__SLOT={n}</script><script src=\"/viewer.js\"></script></body></html>"
-    ))
-    .into_response()
+/// /slot/3 (id) oppure /slot/Cam%201 (nome dell'uscita). Il nome si risolve all'apertura della
+/// pagina: rinominata l'uscita, la fonte continua a funzionare finché OBS non la ricarica.
+async fn slot_page(Path(key): Path<String>, State(hub): State<SharedHub>) -> Response {
+    let Some(n) = hub.lock().unwrap().output_by_key(&key) else {
+        return (StatusCode::NOT_FOUND, "uscita inesistente").into_response();
+    };
+    Html(SLOT_HTML.replace("__SLOT__", &n.to_string())).into_response()
 }
+
+/// Pagina dell'uscita. Le regole del sottopancia hanno specificità zero (:where), così un
+/// selettore semplice nel "CSS personalizzato" della Fonte browser le batte; classi e variabili
+/// sono le stesse di guestroom.live (.lower-third, --lt-*).
+const SLOT_HTML: &str = r#"<!doctype html><html><head><meta charset=utf-8><title>OBSYard slot __SLOT__</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:transparent}
+video{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;opacity:0}
+video.on{opacity:1}
+:where(.lower-third){position:fixed;left:var(--lt-offset-x,4vw);bottom:var(--lt-offset-y,7vh);z-index:2;display:flex;flex-direction:column;gap:.4vh;max-width:80vw;padding:1.2vh 2.4vh 1.3vh 2vh;background:var(--lt-bg,rgb(12 18 32/.88));color:var(--lt-fg,#fff);border-left:.8vh solid var(--lt-accent,#ff5c48);border-radius:var(--lt-radius,.8vh);font-family:var(--lt-font,'Segoe UI',system-ui,sans-serif);transition:opacity .35s ease,transform .35s ease}
+:where(.lower-third[data-state=out]){opacity:0;transform:translateX(-2vw)}
+:where(.lower-third-name){font-size:var(--lt-name-size,4.4vh);font-weight:700;line-height:1.15}
+:where(.lower-third-title){font-size:var(--lt-title-size,2.6vh);line-height:1.2;opacity:.85}
+@media(prefers-reduced-motion:reduce){:where(.lower-third){transition:none}}</style></head>
+<body><video id=v autoplay playsinline disablepictureinpicture></video>
+<script>window.__SLOT=__SLOT__</script><script src="/viewer.js"></script></body></html>"#;
 
 async fn viewer_js() -> impl IntoResponse {
     (
@@ -105,7 +133,8 @@ async fn api_state(State(hub): State<SharedHub>) -> Response {
 
 #[derive(Deserialize)]
 struct AssignQuery {
-    slot: u32,
+    /// id dell'uscita o suo nome ("Cam 1")
+    slot: String,
     /// id traccia o parte del nome dell'ospite; "none" per svuotare
     video: Option<String>,
     /// id, nome, "auto" o "none" (default: auto)
@@ -115,9 +144,9 @@ struct AssignQuery {
 /// Per Stream Deck / script: GET /api/assign?slot=1&video=Mario
 async fn api_assign(Query(q): Query<AssignQuery>, State(hub): State<SharedHub>) -> Response {
     let mut h = hub.lock().unwrap();
-    if !h.slots.contains_key(&q.slot) {
-        return (StatusCode::NOT_FOUND, "slot inesistente").into_response();
-    }
+    let Some(slot) = h.output_by_key(&q.slot) else {
+        return (StatusCode::NOT_FOUND, "uscita inesistente").into_response();
+    };
     let video = match q.video.as_deref() {
         None | Some("none") | Some("") => None,
         Some(s) => match h.find_track("video", s) {
@@ -133,7 +162,7 @@ async fn api_assign(Query(q): Query<AssignQuery>, State(hub): State<SharedHub>) 
             None => return (StatusCode::NOT_FOUND, "traccia audio non trovata").into_response(),
         },
     };
-    h.assign(q.slot, crate::hub::SlotAssign { video, audio }, "queue"); // API: nessuna domanda
+    h.assign(slot, crate::hub::SlotAssign { video, audio }, "queue"); // API: nessuna domanda
     axum::Json(h.snapshot()).into_response()
 }
 
@@ -162,8 +191,14 @@ async fn handle_ws(socket: WebSocket, slot: u32, hub: SharedHub) {
     while let Some(Ok(msg)) = stream.next().await {
         match msg {
             Message::Text(t) => {
-                if let Ok(v) = serde_json::from_str(t.as_str()) {
-                    hub.lock().unwrap().viewer_signal(id, v);
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(t.as_str()) {
+                    let mut h = hub.lock().unwrap();
+                    match v["type"].as_str() {
+                        // tally e statistiche restano nell'hub: allo studio va solo il signaling
+                        Some("tally") => h.viewer_tally(id, v["active"] == true, v["visible"] == true),
+                        Some("stats") => h.viewer_stats(id, v["stats"].clone()),
+                        _ => h.viewer_signal(id, v),
+                    }
                 }
             }
             Message::Close(_) => break,

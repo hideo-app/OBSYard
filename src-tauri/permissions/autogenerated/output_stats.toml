@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-output-stats"
+description = "Enables the output_stats command without any pre-configured scope."
+commands.allow = ["output_stats"]
+
+[[permission]]
+identifier = "deny-output-stats"
+description = "Denies the output_stats command without any pre-configured scope."
+commands.deny = ["output_stats"]

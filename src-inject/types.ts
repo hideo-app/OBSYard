@@ -32,6 +32,16 @@ export interface Settings {
   emptyBg: "transparent" | "black";
   /** nomi con precedenza, in ordine: entrano davanti agli altri */
   priority: string[];
+  /** sottopancia: spenti, disegnati dalla pagina dell'uscita o scritti in fonti Testo di OBS */
+  lowerThirds: "off" | "page" | "obs";
+}
+
+/** Sottopancia di una persona, ricordato per nome */
+export interface LowerThird {
+  /** nome mostrato; null = quello di StreamYard */
+  name: string | null;
+  /** seconda riga (ruolo, account…) */
+  title: string;
 }
 
 /** Uscita OBS (Fonte browser http://127.0.0.1:7878/slot/{id}); l'ordine è quello dell'elenco */
@@ -40,6 +50,8 @@ export interface Output {
   name: string;
   /** eccezione allo sfondo globale senza video; null = come Settings.emptyBg */
   bg: "transparent" | "black" | null;
+  /** sottopancia su questa uscita (quando i sottopancia sono attivi) */
+  lt: boolean;
 }
 
 export interface GroupAction {
@@ -98,6 +110,12 @@ export interface AppState {
   outputs: Output[];
   slots: Record<string, SlotAssign>;
   viewers: Record<string, number>;
+  /** tally per uscita, dalle fonti OBS: in programma, o solo visibile (anteprima) */
+  tally: Record<string, "program" | "preview">;
+  /** testo del sottopancia per uscita (solo quelle che ne mostrano uno) */
+  lowerThirds: Record<string, { name: string; title: string; kind: "camera" | "screen" }>;
+  /** sottopancia salvati, per nome (minuscolo, spazi normalizzati) */
+  titles: Record<string, LowerThird>;
   settings: Settings;
   groups: GroupView[];
   obs: ObsConfig;

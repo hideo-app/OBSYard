@@ -1,11 +1,11 @@
-import { reactive, computed } from "vue";
+import { reactive, computed, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  AppState, GroupAction, GroupConfig, GroupSceneSet, GroupView, ObsConfig, Output, Settings, SlotAssign, TrackInfo,
+  AppState, GroupAction, GroupConfig, GroupSceneSet, GroupView, LowerThird, ObsConfig, Output, Settings, SlotAssign, TrackInfo,
 } from "../src-inject/types";
 
-export type { AppState, GroupAction, GroupConfig, GroupSceneSet, GroupView, ObsConfig, Output, Settings, SlotAssign, TrackInfo };
+export type { AppState, GroupAction, GroupConfig, GroupSceneSet, GroupView, LowerThird, ObsConfig, Output, Settings, SlotAssign, TrackInfo };
 
 export const state = reactive<AppState>({
   port: 7878,
@@ -14,7 +14,10 @@ export const state = reactive<AppState>({
   outputs: [],
   slots: {},
   viewers: {},
-  settings: { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, emptyBg: "transparent", priority: [] },
+  tally: {},
+  lowerThirds: {},
+  titles: {},
+  settings: { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, emptyBg: "transparent", priority: [], lowerThirds: "off" },
   groups: [],
   obs: { url: "ws://127.0.0.1:4455", password: "", drive: false },
   fullRes: { on: false, status: "off", layout: "OBSYard" },
@@ -69,7 +72,35 @@ export const outputsOnScreen = computed(() =>
   slotLayout.value.flatMap((it) => (it.kind === "slot" ? [it.n] : it.group.slots)),
 );
 
+// ------------------------------------------------------------ tally (ON AIR)
+/** tally di un'uscita: in programma in OBS, solo visibile (anteprima) o niente */
+export const tallyOf = (slot: number | string) => state.tally[String(slot)] ?? null;
+/** tally di una sorgente: il più alto tra le uscite che la mostrano */
+export const trackTally = (track: string) => {
+  let best: "program" | "preview" | null = null;
+  for (const [n, a] of Object.entries(state.slots)) {
+    if (a.video !== track) continue;
+    const t = tallyOf(n);
+    if (t === "program") return "program";
+    if (t) best = t;
+  }
+  return best;
+};
+
+// ------------------------------------------------- selezione e trascinamento
+/** sorgente selezionata (clic sulla card): Shift+1…9 la manda sull'uscita N */
+export const selected = ref<string | null>(null);
+/** cosa si sta trascinando: una sorgente (card, membro in attesa) o un'uscita */
+export const drag = reactive<{ kind: "track" | "output" | null; id: string }>({ kind: null, id: "" });
+
+/** chiave dei sottopancia salvati: nome minuscolo con gli spazi normalizzati (come in Rust) */
+export const titleKey = (label: string) => label.trim().split(/\s+/).join(" ").toLowerCase();
+export const titleOf = (label: string): LowerThird | undefined => state.titles[titleKey(label)];
+
 export const slotUrl = (n: number | string) => `http://127.0.0.1:${state.port}/slot/${n}`;
+/** alternativa: l'URL con il nome dell'uscita (vale finché non la rinomini) */
+export const slotNameUrl = (n: number | string) =>
+  `http://127.0.0.1:${state.port}/slot/${encodeURIComponent(outputName(n))}`;
 
 export async function init() {
   await listen<AppState>("state", (e) => Object.assign(state, e.payload));
@@ -106,6 +137,23 @@ export const assign = async (slot: number | string, a: SlotAssign) => {
   if (ok) await invoke("assign", { slot: Number(slot), assign: a, fill: true });
 };
 
+/** manda una sorgente su un'uscita tenendo l'audio che l'uscita ha già scelto */
+export const sendTo = (slot: number | string, track: string) =>
+  assign(slot, { video: track, audio: state.slots[String(slot)]?.audio ?? "auto" });
+
+/** trascinare un'uscita su un'altra: scambio (o invio della sorgente se i gruppi sono diversi) */
+export const swapOutputs = (a: number, b: number) => invoke("swap_outputs", { a, b });
+export const groupMove = (id: number, track: string, delta: -1 | 1) => invoke("group_move", { id, track, delta });
+export const setLowerThird = (label: string, name: string | null, title: string) => invoke("set_lower_third", { label, name, title });
+
+export interface OutputStats {
+  state: string; program: boolean; visible: boolean; audio?: boolean;
+  w?: number; h?: number; fps?: number; kbps?: number; codec?: string; decoder?: string;
+  jitterMs?: number; lost?: number; dropped?: number; freezes?: number; rttMs?: number;
+}
+/** dettagli della connessione delle fonti OBS di un'uscita (una voce per fonte collegata) */
+export const outputStats = (slot: number) => invoke<OutputStats[]>("output_stats", { slot });
+
 export const endFill = (id: number) => invoke("group_end_fill", { id });
 
 export const setSettings = (s: Settings) => invoke("set_settings", { settings: s });
@@ -117,8 +165,8 @@ export const setObs = (obs: ObsConfig) => invoke("set_obs", { obs });
 export const setFullRes = (on: boolean) => invoke("set_full_res", { on });
 
 export const addOutput = (name?: string) => invoke<number>("output_add", { name: name ?? null });
-export const updateOutput = (id: number, patch: { name?: string; bg?: "default" | "transparent" | "black" }) =>
-  invoke("output_update", { id, name: patch.name ?? null, bg: patch.bg ?? null });
+export const updateOutput = (id: number, patch: { name?: string; bg?: "default" | "transparent" | "black"; lt?: boolean }) =>
+  invoke("output_update", { id, name: patch.name ?? null, bg: patch.bg ?? null, lt: patch.lt ?? null });
 /** sfondo effettivo di un'uscita senza video (eccezione o impostazione globale) */
 export const outputBg = (id: number | string) => outputById(id)?.bg ?? state.settings.emptyBg;
 export const moveOutput = (id: number, delta: -1 | 1) => invoke("output_move", { id, delta });

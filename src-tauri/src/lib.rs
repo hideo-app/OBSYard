@@ -134,8 +134,28 @@ fn output_add(hub: State<SharedHub>, name: Option<String>) -> u32 {
 }
 
 #[tauri::command]
-fn output_update(hub: State<SharedHub>, id: u32, name: Option<String>, bg: Option<String>) -> Result<(), String> {
-    hub.lock().unwrap().output_update(id, name, bg)
+fn output_update(hub: State<SharedHub>, id: u32, name: Option<String>, bg: Option<String>, lt: Option<bool>) -> Result<(), String> {
+    hub.lock().unwrap().output_update(id, name, bg, lt)
+}
+
+#[tauri::command]
+fn output_stats(hub: State<SharedHub>, slot: u32) -> Value {
+    hub.lock().unwrap().output_stats(slot)
+}
+
+#[tauri::command]
+fn swap_outputs(hub: State<SharedHub>, a: u32, b: u32) {
+    hub.lock().unwrap().swap_outputs(a, b);
+}
+
+#[tauri::command]
+fn group_move(hub: State<SharedHub>, id: u32, track: String, delta: i32) {
+    hub.lock().unwrap().group_move(id, &track, delta);
+}
+
+#[tauri::command]
+fn set_lower_third(hub: State<SharedHub>, label: String, name: Option<String>, title: String) {
+    hub.lock().unwrap().set_lower_third(&label, name, title);
 }
 
 #[tauri::command]
@@ -191,7 +211,8 @@ pub fn run() {
             pub_ready, pub_tracks, pub_signal, pub_thumbs, pub_fullres, set_full_res,
             get_state, assign, set_settings, set_thumbs, studio_action,
             group_save, group_delete, group_remove, set_obs, group_end_fill,
-            output_add, output_update, output_move, output_delete
+            output_add, output_update, output_move, output_delete,
+            output_stats, swap_outputs, group_move, set_lower_third
         ])
         .setup(move |app| {
             {
@@ -214,6 +235,9 @@ pub fn run() {
                 .title("OBSYard – Regia")
                 .inner_size(1100.0, 760.0)
                 .min_inner_size(760.0, 480.0)
+                // senza il gestore di Tauri per i file trascinati, altrimenti su Windows il
+                // drag and drop HTML5 della Regia (sorgente → uscita) non funziona
+                .disable_drag_drop_handler()
                 .additional_browser_args(&args)
                 .build()?;
 

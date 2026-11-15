@@ -135,7 +135,7 @@ pub enum Placed {
     AskFill { landed: u32 },
 }
 
-fn norm(s: &str) -> String {
+pub(crate) fn norm(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
@@ -302,6 +302,20 @@ impl Groups {
                 None => members.push(m),
             }
         }
+    }
+
+    /// Sposta un membro di un posto tra i membri connessi (delta -1 = verso la prima uscita):
+    /// si scambia con il vicino connesso, gli assenti restano dove sono. Ritorna true se si è mosso.
+    pub fn move_member(&mut self, gid: u32, track: &str, delta: i32, is_live: &dyn Fn(&str) -> bool) -> bool {
+        let live = self.live_idx(gid, is_live);
+        let Some(members) = self.members.get_mut(&gid) else { return false };
+        let Some(p) = live.iter().position(|&k| members[k].track == track) else { return false };
+        let q = p as i32 + delta.signum();
+        if delta == 0 || q < 0 || q >= live.len() as i32 {
+            return false;
+        }
+        members.swap(live[p], live[q as usize]);
+        true
     }
 
     pub fn remove(&mut self, gid: u32, track: &str) {
@@ -857,5 +871,20 @@ mod tests {
         let id = g.save(with_sets(vec![set]), ALL_SLOTS).unwrap();
         g.remove_slot(3);
         assert!(g.cfg(id).unwrap().sets[0].actions.is_empty());
+    }
+
+    #[test]
+    fn sposta_un_membro_tra_i_connessi_saltando_gli_assenti() {
+        let mut g = grp(&[1, 2, 3]);
+        g.place(1, 1, "a", "Anna", ALL);
+        g.place(1, 2, "b", "Bruno", ALL);
+        g.place(1, 3, "c", "Carla", ALL);
+        let no_b: &dyn Fn(&str) -> bool = &|t| t != "b"; // Bruno assente
+        assert!(g.move_member(1, "c", -1, no_b)); // Carla scavalca Anna, non l'assente
+        assert_eq!(order(&g), vec!["c", "b", "a"]);
+        assert!(!g.move_member(1, "c", -1, no_b)); // già prima
+        assert!(!g.move_member(1, "b", 1, no_b)); // un assente non si sposta
+        assert!(g.move_member(1, "c", 1, ALL));
+        assert_eq!(order(&g), vec!["b", "c", "a"]);
     }
 }

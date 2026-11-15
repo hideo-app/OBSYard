@@ -94,7 +94,7 @@ import type { Output, Settings, SlotAssign, TrackInfo, TrackOrigin } from "./typ
   /** tracce terminate: servono per ri-agganciare automaticamente lo stesso ospite se riconnette */
   const ended = new Map<string, { kind: string; origin: TrackOrigin; label: string }>();
   let slots: Record<string, SlotAssign> = {};
-  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, emptyBg: "transparent", priority: [] };
+  let settings: Settings = { codec: "H264", maxBitrateKbps: 12000, maxFps: 60, fullResLayout: "OBSYard", autoAdd: false, emptyBg: "transparent", priority: [], lowerThirds: "off" };
   let outputs: Output[] = [];
   let thumbsOn = true;
   const counters: Record<TrackOrigin, number> = { remote: 0, camera: 0, screen: 0 };

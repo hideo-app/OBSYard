@@ -12,6 +12,10 @@
  *   "Reaction 3", mai alle scene camera; passando a una scena di un altro set, lo stato di quel
  *   set per il numero attuale si applica una volta;
  * - non tocca mai streaming, registrazione, replay buffer o virtual cam.
+ *
+ * Sottopancia in fonti Testo (Sottopancia: "In fonti Testo di OBS"): per ogni uscita scrive nome e
+ * seconda riga nelle fonti "<uscita> nome" e "<uscita> titolo" (SetInputSettings), le svuota quando
+ * l'uscita si svuota e può crearle nella scena corrente.
  */
 import { reactive, watch } from "vue";
 import { state, type GroupAction, type GroupView } from "./store";
@@ -40,6 +44,8 @@ export const obs = reactive({
   /** suggerimenti per gli elementi: "Contenitore › Fonte" */
   items: [] as string[],
   groupStatus: {} as Record<number, GroupObsStatus>,
+  /** sottopancia in fonti Testo: fonti che mancano in OBS, per uscita */
+  ltMissing: {} as Record<number, string[]>,
 });
 
 // ------------------------------------------------------------------ client
@@ -80,19 +86,24 @@ function connect() {
         const secret = await b64sha256(password + d.authentication.salt);
         authentication = await b64sha256(secret + d.authentication.challenge);
       }
-      // eventi: General(1) | Scenes(4) | SceneItems(128)
-      sock.send(JSON.stringify({ op: 1, d: { rpcVersion: 1, authentication, eventSubscriptions: 1 | 4 | 128 } }));
+      // eventi: General(1) | Scenes(4) | Inputs(8) | SceneItems(128)
+      sock.send(JSON.stringify({ op: 1, d: { rpcVersion: 1, authentication, eventSubscriptions: 1 | 4 | 8 | 128 } }));
     } else if (op === 2) {
       obs.status = "connected";
       obs.error = "";
+      ltSent.clear();
       await refreshCatalog();
       reconcile();
+      void syncLowerThirds();
     } else if (op === 5) {
       if (d.eventType === "CurrentProgramSceneChanged") {
         obs.programScene = d.eventData.sceneName;
         reconcile();
       } else if (/^Scene(Item)?(Created|Removed|NameChanged)$/.test(d.eventType)) {
         void refreshCatalog();
+      } else if (/^Input(Created|Removed|NameChanged)$/.test(d.eventType)) {
+        ltSent.clear(); // una fonte Testo creata o rinominata: riscrivi tutto
+        void syncLowerThirds();
       }
     } else if (op === 7) {
       const p = pending.get(d.requestId);
@@ -254,19 +265,98 @@ export function forceApply(id: number) {
   reconcile();
 }
 
+// ------------------------------------------- sottopancia in fonti Testo
+/** nomi delle due fonti Testo di un'uscita */
+export const ltInputs = (output: string) => ({ name: `${output} nome`, title: `${output} titolo` });
+/** serve OBS: "Pilota OBS" attivo oppure sottopancia nelle fonti Testo */
+export const obsWanted = () => state.obs.drive || state.settings.lowerThirds === "obs";
+
+/** ultimo testo scritto per fonte (svuotato a ogni connessione) */
+const ltSent = new Map<string, string>();
+let ltRunning = Promise.resolve();
+
+export function syncLowerThirds() {
+  ltRunning = ltRunning.then(async () => {
+    if (obs.status !== "connected") return void (obs.ltMissing = {});
+    const on = state.settings.lowerThirds === "obs";
+    const missing: Record<number, string[]> = {};
+    for (const o of state.outputs) {
+      const lt = on && o.lt ? state.lowerThirds[String(o.id)] : undefined;
+      const names = ltInputs(o.name);
+      for (const [input, text] of [[names.name, lt?.name ?? ""], [names.title, lt?.title ?? ""]] as const) {
+        // sottopancia spenti: svuota solo le fonti che abbiamo scritto noi
+        if (!on && !ltSent.get(input)) continue;
+        if (ltSent.get(input) === text) continue;
+        try {
+          await request("SetInputSettings", { inputName: input, inputSettings: { text }, overlay: true });
+          ltSent.set(input, text);
+        } catch {
+          ltSent.delete(input);
+          if (on && o.lt) (missing[o.id] ??= []).push(input);
+        }
+      }
+    }
+    obs.ltMissing = missing;
+  });
+  return ltRunning;
+}
+
+/** Crea in OBS le fonti Testo che mancano, in basso a sinistra della scena corrente (anteprima in Modalità studio). */
+export async function createLtInputs(): Promise<number> {
+  const { inputKinds } = await request<{ inputKinds: string[] }>("GetInputKindList");
+  const kind = inputKinds.find((k) => k.startsWith("text_gdiplus")) ?? inputKinds.find((k) => k.startsWith("text_ft2_source"));
+  if (!kind) throw new Error("OBS non ha un tipo di fonte Testo");
+  const scene =
+    (await request("GetCurrentPreviewScene").then((r) => r.currentPreviewSceneName as string).catch(() => "")) ||
+    (await request("GetCurrentProgramScene")).currentProgramSceneName;
+  const { baseHeight } = await request("GetVideoSettings");
+  let made = 0;
+  for (const [id, inputs] of Object.entries(obs.ltMissing)) {
+    const out = state.outputs.find((o) => o.id === Number(id));
+    if (!out) continue;
+    const names = ltInputs(out.name);
+    for (const input of inputs) {
+      const isName = input === names.name;
+      const size = Math.round(baseHeight * (isName ? 0.044 : 0.026));
+      const { sceneItemId } = await request("CreateInput", {
+        sceneName: scene,
+        inputName: input,
+        inputKind: kind,
+        inputSettings: { text: "", font: { face: "Segoe UI", size, style: isName ? "Bold" : "Regular", flags: isName ? 1 : 0 } },
+        sceneItemEnabled: true,
+      });
+      await request("SetSceneItemTransform", {
+        sceneName: scene,
+        sceneItemId,
+        sceneItemTransform: { positionX: Math.round(baseHeight * 0.07), positionY: Math.round(baseHeight * (isName ? 0.84 : 0.895)) },
+      }).catch(() => {});
+      made++;
+    }
+  }
+  ltSent.clear();
+  await syncLowerThirds();
+  return made;
+}
+
 export function startObs() {
-  // riconnetti quando cambiano indirizzo o password
-  // collegati a OBS solo con "Pilota OBS" attivo; riconnetti se cambiano indirizzo o password
+  // collegati a OBS solo se serve ("Pilota OBS" o sottopancia in fonti Testo);
+  // riconnetti se cambiano indirizzo o password
   watch(
-    () => [state.obs.drive, state.obs.url, state.obs.password] as const,
-    ([drive, url, pw]) => {
-      const key = drive ? url + "\n" + pw : "";
+    () => [obsWanted(), state.obs.url, state.obs.password] as const,
+    ([on, url, pw]) => {
+      const key = on ? url + "\n" + pw : "";
       if (key === wanted) return;
       wanted = key;
-      if (drive) connect();
-      else disconnect();
+      if (on) connect();
+      // prima svuota le fonti Testo scritte da noi (sottopancia appena spenti), poi chiudi
+      else void syncLowerThirds().finally(() => !wanted && disconnect());
     },
     { immediate: true },
+  );
+  // sottopancia nelle fonti Testo: riscrivi quando cambia chi è sulle uscite, i testi o i nomi
+  watch(
+    () => JSON.stringify([state.settings.lowerThirds, state.lowerThirds, state.outputs.map((o) => [o.id, o.name, o.lt]), obs.status]),
+    () => void syncLowerThirds(),
   );
   // riconcilia quando cambiano conteggi, azioni o Pilota OBS
   watch(

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { removeFromGroup, state, firstGroupId, endFill, outputName, type GroupView } from "../store";
+import { removeFromGroup, state, firstGroupId, endFill, outputName, groupMove, drag, type GroupView } from "../store";
 import { obs } from "../obs";
 import SlotRow from "./SlotRow.vue";
 
@@ -21,6 +21,14 @@ const status = computed(() => {
     default: return null;
   }
 });
+
+/** un membro in attesa si trascina su un'uscita come una sorgente */
+const dragMember = (e: DragEvent, track: string, label: string) => {
+  e.dataTransfer!.setData("text/plain", label);
+  e.dataTransfer!.effectAllowed = "move";
+  drag.kind = "track";
+  drag.id = track;
+};
 </script>
 
 <template>
@@ -43,15 +51,19 @@ const status = computed(() => {
     <p v-if="standby.length || away.length" class="goff" aria-label="Membri non sugli slot">
       <template v-if="standby.length">
         In attesa:
-        <span v-for="m in standby" :key="m.track" class="gm">
+        <span
+          v-for="m in standby" :key="m.track" class="gm chipm" draggable="true"
+          title="Trascina su un'uscita del gruppo per scambiare, o ↑ per farlo salire di un posto"
+          @dragstart="dragMember($event, m.track, m.label)" @dragend="drag.kind = null"
+        >
           {{ m.label }}
+          <button class="x" :title="`Fai salire ${m.label} di un posto`" @click="groupMove(group.id, m.track, -1)">↑</button>
           <button class="x" :title="`Togli ${m.label} da ${group.name}`" @click="removeFromGroup(group.id, m.track)">×</button>
         </span>
       </template>
-      <template v-if="standby.length && away.length"> · </template>
       <template v-if="away.length">
         Assenti:
-        <span v-for="m in away" :key="m.track" class="gm away">
+        <span v-for="m in away" :key="m.track" class="gm chipm away">
           {{ m.label }}
           <button class="x" :title="`Togli ${m.label} da ${group.name}`" @click="removeFromGroup(group.id, m.track)">×</button>
         </span>
