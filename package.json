@@ -2,6 +2,7 @@
   "name": "obsyard",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build:inject": "esbuild src-inject/studio.ts --bundle --format=iife --minify --target=chrome110 --outfile=src-tauri/gen/studio.js && esbuild src-inject/viewer.ts --bundle --format=iife --minify --target=chrome100 --outfile=src-tauri/gen/viewer.js",

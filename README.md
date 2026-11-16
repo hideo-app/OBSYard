@@ -260,3 +260,7 @@ loads a fake studio with two animated WebRTC guests.
 - `src-inject/studio.ts`: WebRTC hooks and forwarding (injected into StreamYard)
 - `src-inject/viewer.ts`: the OBS Browser Source page
 - `src/`: Vue 3 + TS control room UI
+
+## License
+
+[MIT](LICENSE).
