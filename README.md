@@ -1,12 +1,12 @@
 # OBSYard
 
-Tauri v2 app (Rust + Vue 3/TS) that opens StreamYard and forwards **every single source** (guests, local camera, screen shares) to OBS as a *Browser Source*.
+Tauri v2 app (Rust + Vue 3/TS) that opens **StreamYard** or **Discord** and forwards **every single source** (guests, local camera, screen shares) to OBS, as a *Browser Source* or through its own OBS plugin with no re-encoding.
 
 ## How it works
 
 ```
 ┌─ "studio" window (WebView2) ─────────────┐        ┌─ OBS ───────────────────────┐
-│ streamyard.com                            │        │ Browser Source              │
+│ streamyard.com / discord.com              │        │ Browser Source              │
 │  + studio.js (injected before the page)    │ WebRTC │ http://127.0.0.1:7878/slot/1│
 │    hook RTCPeerConnection / getUserMedia  │══════▶ │  viewer.js                  │
 │    1 sendonly PeerConnection/OBS source   │loopback│  jitter buffer = 0          │
@@ -24,7 +24,7 @@ Performance choices:
 - `degradationPreference = maintain-resolution`: under heavy load fps drop, not resolution.
 - **On the OBS side** `jitterBufferTarget = 0` / `playoutDelayHint = 0`: minimal latency.
 - **Switching the source of a slot = `replaceTrack()`**: no renegotiation, no hiccup in OBS.
-- WebView2 without background/occlusion throttling (the StreamYard window can stay minimized).
+- WebView2 without background/occlusion throttling (the studio window can stay minimized).
 - Thumbnails (192×108) only while the control room is visible, at 0.5–15 fps (*Previews* menu at the top; one every 2 s by default).
 
 ## Usage
@@ -37,13 +37,15 @@ npm run tauri build      # NSIS installer in src-tauri/target/release/bundle
 
 **Releasing on GitHub** (`.github/workflows/release.yml`): set the version to `X.Y.Z` in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, then `git tag vX.Y.Z` and `git push --follow-tags`. GitHub builds on Windows (OBS plugin included) and creates a **draft** Release with the installer, to check and publish. The workflow stops if the tag does not match the version. Run by hand from *Actions*, it builds and keeps the installer among the run's artifacts, with no Release.
 
-1. Join the StreamYard studio in the *OBSYard – StreamYard* window.
+1. Pick the platform in the menu at the top left of the control room (**StreamYard** or **Discord**), then join the studio or the call in the *OBSYard – StreamYard* / *OBSYard – Discord* window.
 2. In the *control room* send sources to outputs: 1…N buttons on the card, drag and drop, Shift+1…9 or the output's menus (see *Sending sources to outputs*).
 3. In OBS add a **Browser Source** with the output's URL (`Copy URL`), 1920×1080, and tick *Control audio via OBS*.
 
 URL parameters: `?audio=0` (video only), `?fit=cover`, `?bg=000000` (solid background), `?lt=0` (no lower third on that source), `?debug=1` (fps/resolution/codec/latency).
 
 ### Sources
+
+On StreamYard (Discord: see *Discord* below):
 
 - The control room shows **only who is on air** in StreamYard, with their StreamYard name. Whoever goes to the backstage disappears, and their output stays empty until they are back on air.
 - Names and on-air state come from StreamYard's protocol (`streamUpdated`, `clientList`, `clientUpdated`), not from the page's text.
@@ -131,6 +133,8 @@ The default rules have zero specificity, so a plain selector is enough to change
 
 ### Guests at full resolution
 
+On Discord the same switch works differently: see *Discord*.
+
 StreamYard lets each guest decide their resolution: the height of their tile in the layout × the broadcast resolution. Measured with a 720p broadcast:
 
 | Layout | Resolution sent |
@@ -157,6 +161,19 @@ It also changes StreamYard's broadcast layout: it makes sense if you direct the 
 For testing and development use `OBSYARD_CONFIG_DIR=<folder>`: the configuration goes there instead of `%APPDATA%\it.obsyard.app`. That way you do not touch the installed app's, which uses the same folder in the development build too.
 
 In the studio, `localStorage.obsyardTap = "1"` records StreamYard's WebSocket messages and HTTP requests in `window.__obsyardTap`, useful if StreamYard changes protocol.
+
+## Discord
+
+Pick **Discord** in the platform menu at the top left of the control room: the studio window opens discord.com and OBSYard takes its sources from the call or voice channel you join there, as it does from a StreamYard studio. The choice is saved.
+
+- **Who is who**: every received track is tied to its user from the stream id Discord writes in its own SDP (`<user id>-<ssrc>`), at once, even for people who are not talking. Names come from the call tiles (`data-selenium-video-tile`) and the avatars in the voice channel list.
+- **Cameras and Go Live**: a screen share (Go Live) arrives over a connection of its own and shows up as **Screen** (`<name> (screen)`), with its own audio; a camera shows up as a guest. Auto-add leaves screens out.
+- **Your own tracks**: Discord opens the microphone several times and sends a processed copy; OBSYard lists only the tracks actually sent into the call (your camera and that microphone), named after you, and pairs them.
+- **Audio-only people**: whoever is in the call with the camera off shows up as **Audio only** (see *Auto-add and priority*).
+- **Full resolution**: the official client asks for less quality when a tile is small. With **Full resolution** on, OBSYard asks Discord for quality 100 for every video (voice gateway op 15, "media sink wants"), so senders encode at their own maximum: up to 720p for a camera, a Go Live per its sender's settings and Nitro. Measured: a camera requested at 90 went from 896×504 to 1280×720.
+- **AV1**: desktop clients with a recent encoder can send AV1 (Discord calls it "AV1X"), which the web client did not accept. OBSYard announces AV1X and accepts AV1 in its answer, so those people show up too.
+- **Limits**: OBSYard sees what Discord's web client can receive; if Discord itself shows an error on someone's tile (e.g. "Unable to start the webcam"), OBSYard gets no picture either. A sender whose video reaches the desktop app but not the web client (an H.264 variant the web does not declare) is still under investigation.
+- The voice connection's messages are always logged in the studio (`window.__obsyardTap`), because Discord removes `localStorage` from its page.
 
 ## Language
 
@@ -248,8 +265,8 @@ loads a fake studio with two animated WebRTC guests.
 
 ## Known limits
 
-- **The best quality is what StreamYard receives.** Their SFU sends simulcast and picks the layer by the size the guest is shown at in the studio: a small guest in the "backstage" can arrive at 320p. To get the high layer, keep the guest visible and large in the studio. The real resolution is shown on every card.
-- Every OBS source costs one encode (in the WebView) and one decode (in OBS). With a HW encoder that is little, but one source per slot is better than duplicates.
+- **The best quality is what the platform receives.** On Discord, see *Discord* above. On StreamYard, its SFU sends simulcast and picks the layer by the size the guest is shown at in the studio: a small guest in the "backstage" can arrive at 320p. To get the high layer, keep the guest visible and large in the studio. The real resolution is shown on every card.
+- Every OBS Browser Source costs one encode (in the WebView) and one decode (in OBS). With a HW encoder that is little, but one source per slot is better than duplicates; the OBS plugin avoids both.
 - Guest names are taken from StreamYard's DOM heuristically: if they change the layout they may show up as "Ospite N".
 
 ## Structure
@@ -257,9 +274,14 @@ loads a fake studio with two animated WebRTC guests.
 - `src-tauri/src/lib.rs`: windows, IPC commands, WebView2 arguments
 - `src-tauri/src/hub.rs`: state and signaling routing
 - `src-tauri/src/server.rs`: HTTP/WS server for OBS and API
-- `src-inject/studio.ts`: WebRTC hooks and forwarding (injected into StreamYard)
+- `src-tauri/src/groups.rs`: output groups (fill order, fill test, duplicates, scene sets)
+- `src-tauri/src/native.rs`: outputs for the OBS plugin (WebView2 shared buffers → named shared memory)
+- `src-tauri/src/obs_plugin.rs`: installs the OBS plugin built with the app (`build.rs`)
+- `src-inject/studio.ts`: WebRTC hooks and forwarding, StreamYard and Discord protocols (injected into the studio window)
 - `src-inject/viewer.ts`: the OBS Browser Source page
-- `src/`: Vue 3 + TS control room UI
+- `src/`: Vue 3 + TS control room UI (`src/i18n.ts`: Italian and English)
+- `obs-plugin/`: the OBS plugin (the "OBSYard" source), in Rust, linked to `obs.dll` by name
+- `shm-proto/`: the shared-memory layouts the app and the plugin agree on
 
 ## License
 
